@@ -31,7 +31,7 @@ pub struct Input<'a> {
 /// Rule thresholds, defaults from the product spec.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Top contributors holding at least this share of installed RAM count as "concentrated".
+    /// Top contributors holding at least this share of *used* RAM count as "concentrated".
     pub concentrated_share: f32,
     pub docker_min_bytes: u64,
     pub docker_ram_percent: f32,
@@ -46,7 +46,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            concentrated_share: 0.60,
+            concentrated_share: 0.50,
             docker_min_bytes: 4 * GIB,
             docker_ram_percent: 85.0,
             java_min_bytes: 3 * GIB,
@@ -164,8 +164,8 @@ pub fn memory_pressure(i: &Input, c: &Config) -> Option<Diagnosis> {
         .collect();
     let contributors: Vec<Contributor> = named.iter().map(|w| contributor(w, total)).collect();
     let top_bytes: u64 = named.iter().map(|w| w.memory_bytes).sum();
-    let share = top_bytes as f32 / total.max(1) as f32;
-    let concentrated = !named.is_empty() && share >= c.concentrated_share;
+    let share_of_used = top_bytes as f32 / used as f32;
+    let concentrated = !named.is_empty() && share_of_used >= c.concentrated_share;
 
     let names: Vec<String> = named.iter().map(|w| cause_label(w)).collect();
     let ram = format!("RAM is at {:.0}%", i.memory.percent);
@@ -191,7 +191,7 @@ pub fn memory_pressure(i: &Input, c: &Config) -> Option<Diagnosis> {
         0.4
     } else {
         let coverage = (top_bytes as f32 / used as f32).min(1.0);
-        (0.5 + 0.4 * coverage + if concentrated { 0.05 } else { 0.0 }).min(0.95)
+        (0.45 + 0.45 * coverage + if concentrated { 0.1 } else { 0.0 }).min(0.95)
     };
 
     let mut recommendations = Vec::new();

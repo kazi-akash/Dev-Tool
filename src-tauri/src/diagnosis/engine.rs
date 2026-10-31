@@ -171,7 +171,7 @@ mod tests {
             vec![
                 proc(1, "java.exe", 4.1, Category::Java, &["gradle", "android"]),
                 proc(2, "vmmemWSL", 4.8, Category::Docker, &[]),
-                proc(3, "chrome.exe", 1.0, Category::Browser, &[]),
+                proc(3, "chrome.exe", 0.3, Category::Browser, &[]),
             ],
         );
         let r = w.run();
@@ -221,9 +221,13 @@ mod tests {
 
     #[test]
     fn unconcentrated_pressure_says_spread_out() {
-        let procs = (1..=12)
-            .map(|i| proc(i, "chrome.exe", 0.9, Category::Browser, &[]))
-            .collect();
+        // Three named workloads (6 GB, 48% of used RAM) plus lots of unrelated processes.
+        let mut procs = vec![
+            proc(1, "vmmem", 2.0, Category::Docker, &[]),
+            proc(2, "chrome.exe", 2.0, Category::Browser, &[]),
+            proc(3, "Code.exe", 2.0, Category::Ide, &[]),
+        ];
+        procs.extend((10..17).map(|i| proc(i, "random.exe", 0.9, Category::Other, &[])));
         let r = World::new(78.0, procs).run();
         let d = &r.headline;
         assert_eq!(d.rule_id, "memory-pressure");
