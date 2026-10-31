@@ -19,6 +19,7 @@ Object.defineProperty(window, "matchMedia", {
 
 beforeEach(() => {
   localStorage.clear();
+  window.location.hash = "#/";
   document.documentElement.classList.remove("dark");
 });
 

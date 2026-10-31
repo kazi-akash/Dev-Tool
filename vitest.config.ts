@@ -8,7 +8,7 @@ export default defineConfig({
     alias: { "@": path.resolve(import.meta.dirname, "src") },
   },
   test: {
-    environment: "jsdom",
+    environment: "happy-dom",
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
     globals: true,
