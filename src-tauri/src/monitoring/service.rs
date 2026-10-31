@@ -45,7 +45,6 @@ fn now_ms() -> u64 {
 
 fn collect_disks(disks: &Disks) -> Vec<DiskMetrics> {
     disks
-        .list()
         .iter()
         .filter(|d| d.total_space() > 0 && !d.is_removable())
         .map(|d| {
@@ -71,9 +70,17 @@ pub fn start(app: AppHandle, state: Arc<MonitorState>) {
 }
 
 fn run(app: AppHandle, state: Arc<MonitorState>) {
-    let mut sys = System::new();
-    let mut disks = Disks::new_with_refreshed_list();
-    let mut disk_cache = collect_disks(&disks);
+    let mut sys = match System::new() {
+        Ok(sys) => sys,
+        Err(e) => {
+            // Graceful degradation: no live metrics, but the rest of the app keeps working.
+            eprintln!("devpilot: system monitor unavailable: {e}");
+            return;
+        }
+    };
+    // Disk enumeration may fail independently (permissions, odd volumes); retried on the disk cadence.
+    let mut disks = Disks::new_with_refreshed_list().ok();
+    let mut disk_cache = disks.as_ref().map(collect_disks).unwrap_or_default();
     let mut tick: u64 = 0;
 
     // CPU usage needs two samples; prime it so the first real reading is meaningful.
@@ -90,9 +97,14 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
             ProcessRefreshKind::nothing(),
         );
 
-        if tick > 0 && tick % DISK_REFRESH_EVERY_TICKS == 0 {
-            disks.refresh(true);
-            disk_cache = collect_disks(&disks);
+        if tick > 0 && tick.is_multiple_of(DISK_REFRESH_EVERY_TICKS) {
+            match disks.as_mut() {
+                Some(d) => d.refresh(true),
+                None => disks = Disks::new_with_refreshed_list().ok(),
+            }
+            if let Some(d) = disks.as_ref() {
+                disk_cache = collect_disks(d);
+            }
         }
 
         let snapshot = SystemSnapshot {
@@ -100,7 +112,7 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
             memory: memory_metrics(sys.total_memory(), sys.available_memory()),
             cpu_percent: clamp_cpu(sys.global_cpu_usage()),
             disks: disk_cache.clone(),
-            uptime_secs: System::uptime(),
+            uptime_secs: System::uptime().unwrap_or(0),
             process_count: sys.processes().len(),
         };
         state.store(snapshot.clone());
