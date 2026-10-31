@@ -16,7 +16,7 @@ It watches RAM, CPU and disks, recognises developer workloads (Docker/WSL2, Andr
 - **Diagnosis**: rule engine explains *why* ("RAM is at 96%. Docker/WSL2 and Android Gradle build account for approximately 8.9 GB, making them the primary contributors.") with contributors, confidence, evidence and recommendations (problem, explanation, benefit, risk, action).
 - **Actions**: whitelisted, risk-gated, undoable where possible (stop container, shut down WSL, stop Gradle daemons, close one process, delete one scanned item, clean old temp files).
 - **History**: RAM, CPU and free-space charts from 15 minutes to 30 days, past diagnoses and actions. Recorded in the background, also while minimised to the tray.
-- **Tray**: Open DevPilot, System Status, Scan Storage, Run Diagnosis, Settings, Quit. Closing the window keeps monitoring running at about 45 MB.
+- **Tray**: Open DevPilot, System Status, Scan Storage, Run Diagnosis, Settings, Quit. Closing the window keeps monitoring running at about 41 MB.
 - **Optional AI**: bring your own OpenAI-compatible, Anthropic-compatible or local (Ollama) endpoint. Only a sanitized summary is sent, you can inspect it first, and the AI can suggest but never act.
 
 ## Design principles
@@ -29,7 +29,7 @@ Tauri 2, Rust (sysinfo, windows-rs, SQLx/SQLite, ureq, keyring), React 19, TypeS
 
 ## Install
 
-There is no published release yet. `pnpm tauri build` produces a per-user NSIS installer (no administrator rights) under `src-tauri/target/release/bundle/nsis`. It is **not code-signed**, so Windows SmartScreen will warn. Windows 10/11 with the WebView2 runtime (preinstalled on Windows 11).
+There is no published release yet. `pnpm tauri build` produces a per-user NSIS installer (3.2 MB, no administrator rights) under `src-tauri/target/release/bundle/nsis`. It is **not code-signed**, so Windows SmartScreen will warn. Windows 10/11 with the WebView2 runtime (preinstalled on Windows 11).
 
 ## Build from source
 
@@ -67,7 +67,7 @@ Current counts: see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#tests). Vitest use
 
 ## Honest limits
 
-- Memory with the window **open** is about 480 MB, nearly all WebView2. With the window closed it is about 45 MB (the WebView is destroyed and recreated on demand). The 150 MB target is met in the resident, tray-only state, not while the window is showing.
+- Memory with the window **open** is about 460 MB, nearly all WebView2. With the window closed it is about 41 MB (the WebView is destroyed and recreated on demand). The 150 MB target is met in the resident, tray-only state, not while the window is showing.
 - Storage lists show 100 rows at a time ("Show more") rather than a virtualized list; process lists are capped at 500 rows by the backend.
 - Without administrator rights some process paths and command lines cannot be read; those processes are classified by name only and flagged as such.
 - The "pagefile usage" signal is an estimate derived from commit charge, not the pagefile's resident size.

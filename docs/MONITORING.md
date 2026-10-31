@@ -94,11 +94,11 @@ Roll-ups run every minute, only on whole buckets, in one transaction per step, a
 
 File: `%APPDATA%\com.niduslab.devpilot\devpilot.db`. If it cannot be opened, history is off and everything else runs.
 
-## Measured (dev build, Windows 11, 14 logical cores)
+## Measured (Windows 11, 14 logical cores; release build unless noted)
 
 | State | CPU (all DevPilot processes) | RAM |
 |-------|------------------------------|-----|
-| Window open | ~0.5% | ~480 MB (7 processes, almost all WebView2) |
-| Window closed (tray) | ~0.1% | ~44 MB (`devpilot.exe` only) |
+| Window open | ~0.5% (dev build) | ~461 MB (7 processes, almost all WebView2) |
+| Window closed (tray) | ~0.10% | ~41 MB (`devpilot.exe` only) |
 
 WebView2 itself dominates the open-window figure; destroying the WebView on close is what brings the resident footprint under the 150 MB target.
