@@ -251,6 +251,7 @@ impl Database {
         }
     }
 
+    #[cfg(test)]
     pub async fn counts(&self) -> Result<(i64, i64), String> {
         let raw: i64 = sqlx::query("SELECT COUNT(*) AS n FROM metrics_raw")
             .fetch_one(&self.pool)
