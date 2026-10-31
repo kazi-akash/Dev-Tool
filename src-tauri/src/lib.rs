@@ -1,5 +1,6 @@
 mod commands;
 mod developers;
+mod diagnosis;
 mod docker;
 mod monitoring;
 mod processes;
@@ -36,6 +37,7 @@ pub fn run() {
             commands::storage::start_storage_scan,
             commands::storage::cancel_storage_scan,
             commands::storage::get_storage_scan,
+            commands::diagnosis::run_diagnosis,
         ])
         .setup(|app| {
             let state = Arc::new(MonitorState::default());
