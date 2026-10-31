@@ -28,7 +28,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "publisher": "Nidus Lab",
+    "copyright": "Copyright (c) Nidus Lab",
+    "category": "DeveloperTool",
+    "shortDescription": "Why is my development PC slow? DevPilot tells you, and what to do about it.",
+    "longDescription": "DevPilot is a lightweight Windows system health assistant for developers. It monitors RAM, CPU and disks, groups Docker/WSL2, Android/Gradle, Node.js and other workloads, explains what is causing resource pressure, and offers safe, previewed fixes. Works fully offline; AI assistance is optional.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
