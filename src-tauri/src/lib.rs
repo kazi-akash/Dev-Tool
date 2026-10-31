@@ -3,6 +3,7 @@ mod developers;
 mod docker;
 mod monitoring;
 mod processes;
+mod storage;
 mod util;
 mod windows;
 
@@ -32,11 +33,15 @@ pub fn run() {
             commands::processes::get_processes,
             commands::developers::get_workloads,
             commands::developers::get_docker_status,
+            commands::storage::start_storage_scan,
+            commands::storage::cancel_storage_scan,
+            commands::storage::get_storage_scan,
         ])
         .setup(|app| {
             let state = Arc::new(MonitorState::default());
             app.manage(state.clone());
             app.manage(Arc::new(DockerMonitor::default()));
+            app.manage(Arc::new(storage::state::StorageState::default()));
             monitoring::service::start(app.handle().clone(), state);
 
             windows::tray::setup(app.handle())?;
