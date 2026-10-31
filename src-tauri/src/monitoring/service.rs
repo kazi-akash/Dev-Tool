@@ -34,6 +34,8 @@ pub struct MonitorState {
     pub pressure: Mutex<PressureEngine>,
     pub disks: Mutex<DiskEngine>,
     pub growth: Mutex<GrowthTracker>,
+    /// Filled once the history database is open; the sampler records into it when present.
+    pub history: crate::commands::history::HistorySlot,
     latest: RwLock<Option<SystemSnapshot>>,
 }
 
@@ -160,6 +162,10 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
             uptime_secs: System::uptime().unwrap_or(0),
             process_count: sys.processes().len(),
         };
+        if let Some(history) = state.history.get() {
+            let workloads = crate::developers::workloads::detect_workloads(&process_list);
+            history.sample(crate::history::sample_row(&snapshot, &workloads));
+        }
         state.store(snapshot.clone());
 
         // Skip the IPC push while the window is hidden in the tray; the snapshot is still kept fresh.

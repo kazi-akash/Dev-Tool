@@ -70,15 +70,20 @@ pub async fn run_diagnosis(
     monitor: State<'_, Arc<MonitorState>>,
     docker: State<'_, Arc<DockerMonitor>>,
     storage: State<'_, Arc<StorageState>>,
+    history: State<'_, super::history::HistorySlot>,
 ) -> Result<DiagnosisReport, String> {
     let (monitor, docker, storage) = (
         monitor.inner().clone(),
         docker.inner().clone(),
         storage.inner().clone(),
     );
-    tauri::async_runtime::spawn_blocking(move || {
+    let report = tauri::async_runtime::spawn_blocking(move || {
         gather(&monitor, &docker, &storage).map(|g| g.report)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    if let Some(h) = history.get() {
+        h.diagnosis(crate::history::stored_diagnosis(&report));
+    }
+    Ok(report)
 }

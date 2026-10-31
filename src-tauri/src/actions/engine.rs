@@ -1,8 +1,8 @@
 //! Action registry plus the permission rules that stand between a request and its side effects.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -34,10 +34,14 @@ pub struct ActionRecord {
     outcome: Option<Outcome>,
 }
 
+type Sink = Box<dyn Fn(&ActionRecord) + Send + Sync>;
+
 pub struct ActionEngine {
     actions: HashMap<&'static str, Box<dyn Action>>,
     log: Mutex<VecDeque<ActionRecord>>,
     next_id: AtomicU64,
+    /// Called for every recorded action (used to persist history).
+    sink: OnceLock<Sink>,
 }
 
 impl Default for ActionEngine {
@@ -59,7 +63,13 @@ impl ActionEngine {
             actions: actions.into_iter().map(|a| (a.spec().id, a)).collect(),
             log: Mutex::new(VecDeque::new()),
             next_id: AtomicU64::new(1),
+            sink: OnceLock::new(),
         }
+    }
+
+    /// Register the persistence hook. Only the first call has an effect.
+    pub fn set_sink(&self, sink: impl Fn(&ActionRecord) + Send + Sync + 'static) {
+        let _ = self.sink.set(Box::new(sink));
     }
 
     fn get(&self, id: &str) -> Result<&dyn Action, ActionError> {
@@ -105,6 +115,9 @@ impl ActionEngine {
             reversible: spec.reversible,
             outcome,
         };
+        if let Some(sink) = self.sink.get() {
+            sink(&rec);
+        }
         let mut log = self.log.lock().unwrap_or_else(|e| e.into_inner());
         log.push_front(rec);
         log.truncate(HISTORY_LIMIT);

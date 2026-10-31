@@ -1,9 +1,11 @@
 mod actions;
 mod ai;
 mod commands;
+mod database;
 mod developers;
 mod diagnosis;
 mod docker;
+mod history;
 mod monitoring;
 mod processes;
 mod storage;
@@ -11,11 +13,68 @@ mod util;
 mod windows;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::Manager;
 
+use actions::automation::ActionsState;
 use docker::DockerMonitor;
 use monitoring::service::MonitorState;
+use storage::state::StorageState;
+
+/// How often a background diagnosis is stored in history (the UI can run its own any time).
+const DIAGNOSIS_RECORD_EVERY: Duration = Duration::from_secs(120);
+
+/// Open the history database and start recording. Any failure leaves history off and the app running.
+fn start_history(
+    app: &tauri::App,
+    monitor: &Arc<MonitorState>,
+    actions: &Arc<ActionsState>,
+    docker: &Arc<DockerMonitor>,
+    storage: &Arc<StorageState>,
+) {
+    let path = match app.path().app_data_dir() {
+        Ok(dir) => dir.join("devpilot.db"),
+        Err(e) => {
+            eprintln!("devpilot: no data folder, history disabled: {e}");
+            return;
+        }
+    };
+    let db = match tauri::async_runtime::block_on(database::Database::open(&path)) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("devpilot: history database unavailable, continuing without it: {e}");
+            return;
+        }
+    };
+    let handle = history::start(db);
+    // From here on the sampler records every tick into history.
+    let _ = monitor.history.set(handle.clone());
+
+    let sink = handle.clone();
+    actions
+        .engine
+        .set_sink(move |rec| sink.action(history::stored_action(rec)));
+
+    let (monitor, docker, storage) = (monitor.clone(), docker.clone(), storage.clone());
+    let recorder = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        // Let the monitor produce its first samples before the first diagnosis.
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        let mut tick = tokio::time::interval(DIAGNOSIS_RECORD_EVERY);
+        loop {
+            tick.tick().await;
+            let (m, d, s) = (monitor.clone(), docker.clone(), storage.clone());
+            let gathered = tauri::async_runtime::spawn_blocking(move || {
+                commands::diagnosis::gather(&m, &d, &s)
+            })
+            .await;
+            if let Ok(Ok(g)) = gathered {
+                recorder.diagnosis(history::stored_diagnosis(&g.report));
+            }
+        }
+    });
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -52,18 +111,27 @@ pub fn run() {
             commands::ai::clear_ai_key,
             commands::ai::preview_ai_payload,
             commands::ai::ask_ai,
+            commands::history::get_history,
+            commands::history::get_recent_diagnoses,
+            commands::history::get_recent_actions,
         ])
         .setup(|app| {
-            let state = Arc::new(MonitorState::default());
-            app.manage(state.clone());
-            app.manage(Arc::new(DockerMonitor::default()));
+            let monitor = Arc::new(MonitorState::default());
+            let docker = Arc::new(DockerMonitor::default());
+            let storage = Arc::new(StorageState::default());
+            let actions = Arc::new(ActionsState::default());
+
+            app.manage(monitor.clone());
+            app.manage(docker.clone());
+            app.manage(storage.clone());
+            app.manage(actions.clone());
+            app.manage(monitor.history.clone());
             app.manage(Arc::new(ai::keystore::CredentialManager::new())
                 as Arc<dyn ai::keystore::SecretStore>);
-            app.manage(Arc::new(storage::state::StorageState::default()));
-            let actions = Arc::new(actions::automation::ActionsState::default());
-            app.manage(actions.clone());
-            actions::automation::start(actions, state.clone());
-            monitoring::service::start(app.handle().clone(), state);
+
+            start_history(app, &monitor, &actions, &docker, &storage);
+            actions::automation::start(actions, monitor.clone());
+            monitoring::service::start(app.handle().clone(), monitor);
 
             windows::tray::setup(app.handle())?;
             Ok(())
