@@ -4,11 +4,13 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sysinfo::{Disks, ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::{Disks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::config::MonitorInterval;
 use super::metrics::{DiskMetrics, SystemSnapshot, clamp_cpu, disk_metrics, memory_metrics};
+use crate::processes::collector::ProcessCollector;
+use crate::processes::store::ProcessStore;
 
 pub const EVENT_SYSTEM_METRICS: &str = "system-metrics";
 
@@ -19,6 +21,7 @@ const DISK_REFRESH_EVERY_TICKS: u64 = 5;
 #[derive(Default)]
 pub struct MonitorState {
     pub interval: MonitorInterval,
+    pub processes: ProcessStore,
     latest: RwLock<Option<SystemSnapshot>>,
 }
 
@@ -82,6 +85,7 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
     let mut disks = Disks::new_with_refreshed_list().ok();
     let mut disk_cache = disks.as_ref().map(collect_disks).unwrap_or_default();
     let mut tick: u64 = 0;
+    let mut collector = ProcessCollector::default();
 
     // CPU usage needs two samples; prime it so the first real reading is meaningful.
     sys.refresh_cpu_usage();
@@ -90,12 +94,18 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
     loop {
         sys.refresh_cpu_usage();
         sys.refresh_memory();
-        // Count only: no per-process details requested, keeps this cheap.
+        // Exe path and command line are fetched once per process (OnlyIfNotSet); only CPU and
+        // memory are re-read every tick.
         sys.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            ProcessRefreshKind::nothing(),
+            ProcessRefreshKind::nothing()
+                .with_cpu()
+                .with_memory()
+                .with_exe(UpdateKind::OnlyIfNotSet)
+                .with_cmd(UpdateKind::OnlyIfNotSet),
         );
+        state.processes.replace(collector.collect(&sys));
 
         if tick > 0 && tick.is_multiple_of(DISK_REFRESH_EVERY_TICKS) {
             match disks.as_mut() {

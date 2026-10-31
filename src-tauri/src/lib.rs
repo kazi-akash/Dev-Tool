@@ -1,5 +1,6 @@
 mod commands;
 mod monitoring;
+mod processes;
 mod windows;
 
 use std::sync::Arc;
@@ -19,6 +20,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::system::get_system_snapshot,
             commands::system::set_monitor_interval,
+            commands::processes::get_processes,
         ])
         .setup(|app| {
             let state = Arc::new(MonitorState::default());
