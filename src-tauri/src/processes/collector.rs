@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use sysinfo::{Pid, System};
 
-use super::classify::classify;
+use super::classify::{classify, detect_tags};
 use super::model::{Category, Evidence, ProcessInfo};
 use super::redact::redact_command_line;
 
@@ -26,6 +26,7 @@ struct StaticInfo {
     command_line: Option<String>,
     category: Category,
     evidence: Evidence,
+    tags: Vec<&'static str>,
 }
 
 #[derive(Default)]
@@ -55,13 +56,16 @@ impl ProcessCollector {
                     .map(|a| a.to_string_lossy().into_owned())
                     .collect();
                 // Classify on the raw command line (matching only), but never store it raw.
-                let class = classify(&name, exe_path.as_deref(), &args.join(" "));
+                let raw_cmd = args.join(" ");
+                let class = classify(&name, exe_path.as_deref(), &raw_cmd);
+                let tags = detect_tags(&name, exe_path.as_deref(), &raw_cmd);
                 StaticInfo {
                     name,
                     exe_path,
                     command_line: redact_command_line(&args),
                     category: class.category,
                     evidence: class.evidence,
+                    tags,
                 }
             });
 
@@ -76,11 +80,11 @@ impl ProcessCollector {
                 memory_bytes: proc_.memory(),
                 category: info.category,
                 evidence: info.evidence,
+                tags: info.tags.clone(),
             });
         }
 
         self.cache.retain(|k, _| live.contains(k));
-        // `live` is only needed for the retain above.
         out
     }
 }

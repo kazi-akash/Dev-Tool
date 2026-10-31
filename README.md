@@ -67,7 +67,7 @@ Phase 3:
 - `cargo test`: 51 passed (classifier rules and evidence, redaction, query/sort/limit, store incl. poisoned lock, real-OS collector test)
 - `cargo clippy -D warnings`, `tsc --noEmit`: clean
 - Runtime on the real machine: Chrome/Brave BROWSER, Kiro IDE (path evidence), explorer SYSTEM; ~0.45% CPU with the page open
-- Known limit: `claude.exe`, `Dev tools` of unknown vendors fall to OTHER by design
+- Known limit: tools without a rule (for example `claude.exe`) are `OTHER` by design, not guessed
 
 Phase 2:
 - `pnpm test`: 11 passed (adds format helpers, dashboard rendering from a snapshot)

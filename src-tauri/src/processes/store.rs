@@ -20,7 +20,6 @@ impl ProcessStore {
     }
 
     /// Full copy for in-process engines (workload detection, diagnosis).
-    #[allow(dead_code)] // first consumer arrives in Phase 4
     pub fn snapshot(&self) -> Vec<ProcessInfo> {
         self.latest
             .read()

@@ -304,6 +304,53 @@ fn system(i: &Input) -> Option<Classification> {
     None
 }
 
+/// Fine-grained markers used by workload detection. Computed from the full (unredacted,
+/// untruncated) command line so facts near the end of long lines are not lost.
+pub fn detect_tags(name: &str, exe_path: Option<&str>, cmdline: &str) -> Vec<&'static str> {
+    let n = name.to_lowercase();
+    let n = n.strip_suffix(".exe").unwrap_or(&n);
+    let path = exe_path
+        .map(|p| p.to_lowercase().replace('/', "\\"))
+        .unwrap_or_default();
+    let cmd = cmdline.to_lowercase().replace('/', "\\");
+    let mut tags = Vec::new();
+
+    if cmd.contains("gradledaemon")
+        || cmd.contains("org.gradle")
+        || cmd.contains("gradlewrappermain")
+        || n.starts_with("gradle")
+    {
+        tags.push("gradle");
+    }
+    if cmd.contains("android") || path.contains("android") {
+        tags.push("android");
+    }
+    if cmd.contains("next\\dist")
+        || cmd.contains("next dev")
+        || cmd.contains("next start")
+        || cmd.contains("next build")
+        || n == "next-server"
+    {
+        tags.push("nextjs");
+    }
+    if cmd.contains("vite") {
+        tags.push("vite");
+    }
+    if cmd.contains("artisan") {
+        tags.push("artisan");
+    }
+    if path.contains("\\laragon\\") || n == "laragon" {
+        tags.push("laragon");
+    }
+    if matches!(n, "npm" | "npx" | "pnpm" | "yarn")
+        || cmd.contains("npm-cli.js")
+        || cmd.contains("pnpm.cjs")
+    {
+        tags.push("package-manager");
+    }
+    tags
+}
+
 /// Classify a process. `exe_path` and `cmdline` may be unavailable (protected processes).
 pub fn classify(name: &str, exe_path: Option<&str>, cmdline: &str) -> Classification {
     let lower_name = name.to_lowercase();
@@ -589,6 +636,28 @@ mod tests {
             ),
             (Category::Development, Evidence::Path)
         );
+    }
+
+    #[test]
+    fn tags_detect_workload_markers() {
+        let t = detect_tags(
+            "java.exe",
+            None,
+            "java org.gradle.launcher.daemon.bootstrap.GradleDaemon C:\\Android\\Sdk",
+        );
+        assert!(t.contains(&"gradle") && t.contains(&"android"));
+        assert!(
+            detect_tags("node.exe", None, "node node_modules/next/dist/bin/next dev")
+                .contains(&"nextjs")
+        );
+        assert!(detect_tags("node.exe", None, "node vite --port 5173").contains(&"vite"));
+        assert!(detect_tags("php.exe", None, "php artisan serve").contains(&"artisan"));
+        assert!(
+            detect_tags("nginx.exe", Some("C:\\laragon\\bin\\nginx\\nginx.exe"), "")
+                .contains(&"laragon")
+        );
+        assert!(detect_tags("pnpm.exe", None, "").contains(&"package-manager"));
+        assert!(detect_tags("notepad.exe", None, "").is_empty());
     }
 
     #[test]

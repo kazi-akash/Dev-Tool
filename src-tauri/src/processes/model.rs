@@ -64,6 +64,8 @@ pub struct ProcessInfo {
     pub memory_bytes: u64,
     pub category: Category,
     pub evidence: Evidence,
+    /// Fine-grained markers (`gradle`, `nextjs`, `laragon`, ...) used by workload detection.
+    pub tags: Vec<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -132,6 +134,7 @@ pub(crate) fn sample(pid: u32, name: &str, mem: u64, cpu: f32, category: Categor
         memory_bytes: mem,
         category,
         evidence: Evidence::Name,
+        tags: vec![],
     }
 }
 

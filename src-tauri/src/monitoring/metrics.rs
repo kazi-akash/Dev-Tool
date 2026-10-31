@@ -2,6 +2,9 @@
 
 use serde::Serialize;
 
+use super::disks::DiskReport;
+use super::pressure::PressureReport;
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryMetrics {
@@ -31,6 +34,9 @@ pub struct SystemSnapshot {
     /// Total CPU usage across all cores, 0-100.
     pub cpu_percent: f32,
     pub disks: Vec<DiskMetrics>,
+    /// Free-space state and trend per drive (same order as `disks`).
+    pub disk_health: Vec<DiskReport>,
+    pub pressure: Option<PressureReport>,
     pub uptime_secs: u64,
     pub process_count: usize,
 }
@@ -142,6 +148,8 @@ mod tests {
             memory: memory_metrics(10, 5),
             cpu_percent: 1.0,
             disks: vec![],
+            disk_health: vec![],
+            pressure: None,
             uptime_secs: 2,
             process_count: 3,
         };

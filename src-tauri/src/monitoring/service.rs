@@ -1,16 +1,25 @@
 //! Background sampling thread. Runs independent of the UI so monitoring continues in the tray.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{Disks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::config::MonitorInterval;
+use super::disks::DiskEngine;
+use super::growth::GrowthTracker;
 use super::metrics::{DiskMetrics, SystemSnapshot, clamp_cpu, disk_metrics, memory_metrics};
+use super::pressure::{PressureEngine, PressureInputs};
 use crate::processes::collector::ProcessCollector;
 use crate::processes::store::ProcessStore;
+use crate::windows::memory::read_commit_info;
+
+/// Engines hold plain data; a panic in another thread must not disable monitoring.
+pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 pub const EVENT_SYSTEM_METRICS: &str = "system-metrics";
 
@@ -22,6 +31,9 @@ const DISK_REFRESH_EVERY_TICKS: u64 = 5;
 pub struct MonitorState {
     pub interval: MonitorInterval,
     pub processes: ProcessStore,
+    pub pressure: Mutex<PressureEngine>,
+    pub disks: Mutex<DiskEngine>,
+    pub growth: Mutex<GrowthTracker>,
     latest: RwLock<Option<SystemSnapshot>>,
 }
 
@@ -86,6 +98,7 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
     let mut disk_cache = disks.as_ref().map(collect_disks).unwrap_or_default();
     let mut tick: u64 = 0;
     let mut collector = ProcessCollector::default();
+    let started = Instant::now();
 
     // CPU usage needs two samples; prime it so the first real reading is meaningful.
     sys.refresh_cpu_usage();
@@ -105,7 +118,8 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
                 .with_exe(UpdateKind::OnlyIfNotSet)
                 .with_cmd(UpdateKind::OnlyIfNotSet),
         );
-        state.processes.replace(collector.collect(&sys));
+        let process_list = collector.collect(&sys);
+        state.processes.replace(process_list.clone());
 
         if tick > 0 && tick.is_multiple_of(DISK_REFRESH_EVERY_TICKS) {
             match disks.as_mut() {
@@ -117,11 +131,32 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
             }
         }
 
+        let now_secs = started.elapsed().as_secs_f64();
+        let memory = memory_metrics(sys.total_memory(), sys.available_memory());
+
+        // Commit/pagefile data is Windows-only and optional: pressure degrades to RAM-only.
+        let commit = read_commit_info();
+        let pressure = lock(&state.pressure).update(
+            PressureInputs {
+                percent: memory.percent,
+                available_bytes: memory.available_bytes,
+                total_bytes: memory.total_bytes,
+                commit_percent: commit.map(|c| c.commit_percent()),
+                pagefile_percent: commit.map(|c| c.pagefile_overflow_percent()),
+            },
+            now_secs,
+        );
+
+        lock(&state.growth).observe(now_secs, &process_list);
+        let disk_health = lock(&state.disks).update(now_secs, &disk_cache);
+
         let snapshot = SystemSnapshot {
             timestamp_ms: now_ms(),
-            memory: memory_metrics(sys.total_memory(), sys.available_memory()),
+            memory,
             cpu_percent: clamp_cpu(sys.global_cpu_usage()),
             disks: disk_cache.clone(),
+            disk_health,
+            pressure: Some(pressure),
             uptime_secs: System::uptime().unwrap_or(0),
             process_count: sys.processes().len(),
         };

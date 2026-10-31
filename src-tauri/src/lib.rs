@@ -1,12 +1,16 @@
 mod commands;
+mod developers;
+mod docker;
 mod monitoring;
 mod processes;
+mod util;
 mod windows;
 
 use std::sync::Arc;
 
 use tauri::Manager;
 
+use docker::DockerMonitor;
 use monitoring::service::MonitorState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,11 +24,19 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::system::get_system_snapshot,
             commands::system::set_monitor_interval,
+            commands::system::get_pressure_thresholds,
+            commands::system::set_pressure_thresholds,
+            commands::system::get_disk_thresholds,
+            commands::system::set_disk_thresholds,
+            commands::system::get_memory_growth,
             commands::processes::get_processes,
+            commands::developers::get_workloads,
+            commands::developers::get_docker_status,
         ])
         .setup(|app| {
             let state = Arc::new(MonitorState::default());
             app.manage(state.clone());
+            app.manage(Arc::new(DockerMonitor::default()));
             monitoring::service::start(app.handle().clone(), state);
 
             windows::tray::setup(app.handle())?;
