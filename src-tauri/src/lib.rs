@@ -1,4 +1,5 @@
 mod actions;
+mod ai;
 mod commands;
 mod developers;
 mod diagnosis;
@@ -46,11 +47,18 @@ pub fn run() {
             commands::actions::get_action_history,
             commands::actions::get_safe_automation,
             commands::actions::set_safe_automation,
+            commands::ai::ai_key_status,
+            commands::ai::set_ai_key,
+            commands::ai::clear_ai_key,
+            commands::ai::preview_ai_payload,
+            commands::ai::ask_ai,
         ])
         .setup(|app| {
             let state = Arc::new(MonitorState::default());
             app.manage(state.clone());
             app.manage(Arc::new(DockerMonitor::default()));
+            app.manage(Arc::new(ai::keystore::CredentialManager::new())
+                as Arc<dyn ai::keystore::SecretStore>);
             app.manage(Arc::new(storage::state::StorageState::default()));
             let actions = Arc::new(actions::automation::ActionsState::default());
             app.manage(actions.clone());
