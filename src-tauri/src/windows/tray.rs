@@ -3,7 +3,7 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter,
 };
 
 use super::window::show_main_window;
@@ -94,9 +94,4 @@ mod tests {
         assert_eq!(route_for("../../etc"), None);
         assert_eq!(route_for(""), None);
     }
-}
-
-#[allow(dead_code)]
-fn _assert_manager_in_scope(app: &AppHandle) {
-    let _ = app.get_webview_window("main");
 }
