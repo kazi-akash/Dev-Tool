@@ -14,6 +14,8 @@ mod processes;
 mod storage;
 mod util;
 mod windows;
+#[cfg(test)]
+mod workflow_tests;
 
 use std::sync::Arc;
 use std::time::Duration;
