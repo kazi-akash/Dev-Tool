@@ -27,8 +27,9 @@ describe("app shell", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", { name: "History" }));
-    expect(await screen.findByRole("heading", { name: "History" })).toBeInTheDocument();
-  });
+    // The chart library is a separate chunk; importing it in a test environment can take a few seconds.
+    expect(await screen.findByRole("heading", { name: "History" }, { timeout: 10_000 })).toBeInTheDocument();
+  }, 20_000);
 });
 
 describe("settings", () => {
