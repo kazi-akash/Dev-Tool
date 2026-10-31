@@ -35,6 +35,7 @@ fn pct(used: u64, total: u64) -> f32 {
 
 /// Read commit info. `None` if the Windows call fails; callers degrade to RAM-only pressure.
 #[cfg(windows)]
+#[allow(unsafe_code)]
 pub fn read_commit_info() -> Option<CommitInfo> {
     use ::windows::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
 

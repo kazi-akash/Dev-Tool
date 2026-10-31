@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-storage-scan"
+description = "Enables the start_storage_scan command without any pre-configured scope."
+commands.allow = ["start_storage_scan"]
+
+[[permission]]
+identifier = "deny-start-storage-scan"
+description = "Denies the start_storage_scan command without any pre-configured scope."
+commands.deny = ["start_storage_scan"]

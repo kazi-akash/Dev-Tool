@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-disk-thresholds"
+description = "Enables the set_disk_thresholds command without any pre-configured scope."
+commands.allow = ["set_disk_thresholds"]
+
+[[permission]]
+identifier = "deny-set-disk-thresholds"
+description = "Denies the set_disk_thresholds command without any pre-configured scope."
+commands.deny = ["set_disk_thresholds"]

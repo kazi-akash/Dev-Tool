@@ -1,7 +1,7 @@
 //! System tray: menu, left-click to open, route navigation events to the frontend.
 
 use tauri::{
-    AppHandle, Emitter,
+    AppHandle,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -61,9 +61,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 return;
             }
             if let Some(route) = route_for(id) {
-                show_main_window(app);
-                // Best effort: the frontend may not be listening yet during startup.
-                let _ = app.emit("navigate", route);
+                // Shows the window, recreating it if it was closed, and opens the route.
+                show_main_window(app, Some(route));
             }
         })
         .on_tray_icon_event(|tray, event| {
@@ -73,7 +72,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                show_main_window(tray.app_handle());
+                show_main_window(tray.app_handle(), None);
             }
         });
 

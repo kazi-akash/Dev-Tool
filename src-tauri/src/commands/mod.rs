@@ -6,3 +6,4 @@ pub mod history;
 pub mod processes;
 pub mod storage;
 pub mod system;
+pub mod window;

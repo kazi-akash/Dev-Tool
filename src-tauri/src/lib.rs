@@ -1,3 +1,6 @@
+// The only `unsafe` is one audited Windows API call in `windows/memory.rs`.
+#![deny(unsafe_code)]
+
 mod actions;
 mod ai;
 mod commands;
@@ -81,7 +84,7 @@ pub fn run() {
     tauri::Builder::default()
         // A second launch must not create a second tray icon; focus the running instance instead.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            windows::window::show_main_window(app);
+            windows::window::show_main_window(app, None);
         }))
         .on_window_event(windows::window::on_window_event)
         .invoke_handler(tauri::generate_handler![
@@ -114,6 +117,7 @@ pub fn run() {
             commands::history::get_history,
             commands::history::get_recent_diagnoses,
             commands::history::get_recent_actions,
+            commands::window::take_pending_route,
         ])
         .setup(|app| {
             let monitor = Arc::new(MonitorState::default());
@@ -126,6 +130,7 @@ pub fn run() {
             app.manage(storage.clone());
             app.manage(actions.clone());
             app.manage(monitor.history.clone());
+            app.manage(windows::window::PendingRoute::default());
             app.manage(Arc::new(ai::keystore::CredentialManager::new())
                 as Arc<dyn ai::keystore::SecretStore>);
 
@@ -136,6 +141,133 @@ pub fn run() {
             windows::tray::setup(app.handle())?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // Closing the last window must not quit: DevPilot keeps monitoring from the tray.
+            // An explicit Quit (tray menu) carries an exit code and is allowed through.
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event
+                && code.is_none()
+            {
+                api.prevent_exit();
+            }
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    /// Command names registered with the invoke handler in this file.
+    fn handler_commands() -> BTreeSet<String> {
+        include_str!("lib.rs")
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("commands::"))
+            .filter_map(|l| l.strip_suffix(','))
+            .filter_map(|l| l.rsplit("::").next())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Names declared in build.rs (the ACL manifest).
+    fn manifest_commands() -> BTreeSet<String> {
+        let src = include_str!("../build.rs");
+        let start = src.find("const COMMANDS").expect("COMMANDS list");
+        let body = &src[start
+            ..src[start..]
+                .find("];")
+                .map(|e| start + e)
+                .expect("end of list")];
+        body.split('"')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// `allow-xyz-abc` permissions in the capability file, mapped back to command names.
+    fn granted_commands() -> BTreeSet<String> {
+        let v: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).expect("valid json");
+        v["permissions"]
+            .as_array()
+            .expect("permissions")
+            .iter()
+            .filter_map(|p| p.as_str())
+            .filter_map(|p| p.strip_prefix("allow-"))
+            .map(|p| p.replace('-', "_"))
+            .collect()
+    }
+
+    #[test]
+    fn invoke_handler_manifest_and_capability_agree() {
+        let handler = handler_commands();
+        assert!(
+            handler.len() >= 30,
+            "found only {} handler commands: {handler:?}",
+            handler.len()
+        );
+        assert_eq!(
+            handler,
+            manifest_commands(),
+            "build.rs COMMANDS must match the invoke handler"
+        );
+        assert_eq!(
+            handler,
+            granted_commands(),
+            "capabilities/default.json must grant exactly the handler commands"
+        );
+    }
+
+    #[test]
+    fn frontend_gets_no_ambient_powers() {
+        let v: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let perms: Vec<&str> = v["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.as_str())
+            .collect();
+        for p in &perms {
+            assert!(
+                p.starts_with("allow-")
+                    || matches!(*p, "core:event:allow-listen" | "core:event:allow-unlisten"),
+                "unexpected permission {p}"
+            );
+        }
+        let windows: Vec<&str> = v["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|w| w.as_str())
+            .collect();
+        assert_eq!(windows, vec!["main"]);
+    }
+
+    #[test]
+    fn csp_is_strict_in_release() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let csp = conf["app"]["security"]["csp"]
+            .as_str()
+            .expect("a release CSP must be set");
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("object-src 'none'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+        let script = csp
+            .split(';')
+            .find(|d| d.trim_start().starts_with("script-src"))
+            .unwrap();
+        assert!(
+            !script.contains("unsafe-inline")
+                && !script.contains("unsafe-eval")
+                && !script.contains('*'),
+            "{script}"
+        );
+        assert!(
+            !csp.contains("http://") || csp.contains("http://ipc.localhost"),
+            "no remote http origins in release"
+        );
+    }
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-pressure-thresholds"
+description = "Enables the set_pressure_thresholds command without any pre-configured scope."
+commands.allow = ["set_pressure_thresholds"]
+
+[[permission]]
+identifier = "deny-set-pressure-thresholds"
+description = "Denies the set_pressure_thresholds command without any pre-configured scope."
+commands.deny = ["set_pressure_thresholds"]

@@ -1,9 +1,42 @@
 {
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
-  "permissions": [
-    "core:default"
-  ]
+    "$schema":  "../gen/schemas/desktop-schema.json",
+    "identifier":  "default",
+    "description":  "The main window may listen for events and call the DevPilot commands listed here. Nothing else: no shell, file system, HTTP or process access from the frontend.",
+    "windows":  [
+                    "main"
+                ],
+    "permissions":  [
+                        "core:event:allow-listen",
+                        "core:event:allow-unlisten",
+                        "allow-get-system-snapshot",
+                        "allow-set-monitor-interval",
+                        "allow-get-pressure-thresholds",
+                        "allow-set-pressure-thresholds",
+                        "allow-get-disk-thresholds",
+                        "allow-set-disk-thresholds",
+                        "allow-get-memory-growth",
+                        "allow-get-processes",
+                        "allow-get-workloads",
+                        "allow-get-docker-status",
+                        "allow-start-storage-scan",
+                        "allow-cancel-storage-scan",
+                        "allow-get-storage-scan",
+                        "allow-run-diagnosis",
+                        "allow-list-actions",
+                        "allow-preview-action",
+                        "allow-execute-action",
+                        "allow-rollback-action",
+                        "allow-get-action-history",
+                        "allow-get-safe-automation",
+                        "allow-set-safe-automation",
+                        "allow-ai-key-status",
+                        "allow-set-ai-key",
+                        "allow-clear-ai-key",
+                        "allow-preview-ai-payload",
+                        "allow-ask-ai",
+                        "allow-get-history",
+                        "allow-get-recent-diagnoses",
+                        "allow-get-recent-actions",
+                        "allow-take-pending-route"
+                    ]
 }

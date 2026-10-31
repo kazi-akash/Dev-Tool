@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-recent-diagnoses"
+description = "Enables the get_recent_diagnoses command without any pre-configured scope."
+commands.allow = ["get_recent_diagnoses"]
+
+[[permission]]
+identifier = "deny-get-recent-diagnoses"
+description = "Denies the get_recent_diagnoses command without any pre-configured scope."
+commands.deny = ["get_recent_diagnoses"]

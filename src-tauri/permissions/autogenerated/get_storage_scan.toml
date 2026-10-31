@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-storage-scan"
+description = "Enables the get_storage_scan command without any pre-configured scope."
+commands.allow = ["get_storage_scan"]
+
+[[permission]]
+identifier = "deny-get-storage-scan"
+description = "Denies the get_storage_scan command without any pre-configured scope."
+commands.deny = ["get_storage_scan"]
