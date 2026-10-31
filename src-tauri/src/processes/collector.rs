@@ -89,6 +89,48 @@ impl ProcessCollector {
 mod tests {
     use super::*;
 
+    /// Runs against the real OS process table: the test binary itself must show up with sane data.
+    #[test]
+    fn collects_real_processes_including_self() {
+        use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
+
+        let mut sys = System::new().expect("system info available");
+        sys.refresh_cpu_usage();
+        let kind = ProcessRefreshKind::nothing()
+            .with_cpu()
+            .with_memory()
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet);
+        sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+        sys.refresh_cpu_usage();
+        sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+
+        let mut collector = ProcessCollector::default();
+        let list = collector.collect(&sys);
+        assert!(
+            list.len() > 10,
+            "expected many processes, got {}",
+            list.len()
+        );
+
+        let me = list
+            .iter()
+            .find(|p| p.pid == std::process::id())
+            .expect("own process present");
+        assert!(me.memory_bytes > 0);
+        assert!(me.exe_path.is_some());
+        assert!(me.start_time > 0);
+        assert!(me.parent_pid.is_some());
+        assert!((0.0..=100.0).contains(&me.cpu_percent));
+        assert!(list.iter().all(|p| (0.0..=100.0).contains(&p.cpu_percent)));
+
+        // Second pass reuses the cache and yields the same classification.
+        let again = collector.collect(&sys);
+        let me2 = again.iter().find(|p| p.pid == me.pid).unwrap();
+        assert_eq!((me.category, me.evidence), (me2.category, me2.evidence));
+    }
+
     #[test]
     fn cpu_is_normalized_by_core_count() {
         assert_eq!(normalize_cpu(400.0, 8), 50.0);
