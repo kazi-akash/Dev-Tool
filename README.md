@@ -2,7 +2,7 @@
 
 Windows developer-system health assistant. Answers: *why is my dev PC slow, out of RAM, or out of disk, and what can I safely do about it?*
 
-Status: **Phase 1 complete** (application shell: tray, sidebar, routing, theme, settings). Pages other than Settings are placeholders. Monitoring starts in Phase 2.
+Status: **Phase 2 complete** (shell + live system monitor: RAM, CPU, disks, uptime, process count). Dashboard shows basic live cards; Processes, Storage, Diagnosis, Actions and History are placeholders. See [docs/MONITORING.md](docs/MONITORING.md).
 
 ## Stack
 
@@ -61,6 +61,12 @@ devpilot/
 Target structure is in the master spec; modules are added phase by phase.
 
 ## Verification
+
+Phase 2:
+- `pnpm test`: 11 passed (adds format helpers, dashboard rendering from a snapshot)
+- `cargo test`: 14 passed (metrics math, interval validation, tray routes)
+- Runtime values match OS ground truth (RAM total/used, C: free space)
+- Overhead: ~0.6% CPU visible, ~0.09% hidden; RAM above target because of WebView2, see docs/MONITORING.md
 
 Phase 1:
 - `pnpm build`: OK
