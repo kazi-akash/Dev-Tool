@@ -54,7 +54,6 @@ pub struct Workload {
 }
 
 impl Workload {
-    #[allow(dead_code)] // consumed by the diagnosis rules (Phase 9)
     pub fn has_signal(&self, s: &str) -> bool {
         self.signals.contains(&s)
     }

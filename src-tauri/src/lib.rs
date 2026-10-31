@@ -1,3 +1,4 @@
+mod actions;
 mod commands;
 mod developers;
 mod diagnosis;
@@ -38,12 +39,22 @@ pub fn run() {
             commands::storage::cancel_storage_scan,
             commands::storage::get_storage_scan,
             commands::diagnosis::run_diagnosis,
+            commands::actions::list_actions,
+            commands::actions::preview_action,
+            commands::actions::execute_action,
+            commands::actions::rollback_action,
+            commands::actions::get_action_history,
+            commands::actions::get_safe_automation,
+            commands::actions::set_safe_automation,
         ])
         .setup(|app| {
             let state = Arc::new(MonitorState::default());
             app.manage(state.clone());
             app.manage(Arc::new(DockerMonitor::default()));
             app.manage(Arc::new(storage::state::StorageState::default()));
+            let actions = Arc::new(actions::automation::ActionsState::default());
+            app.manage(actions.clone());
+            actions::automation::start(actions, state.clone());
             monitoring::service::start(app.handle().clone(), state);
 
             windows::tray::setup(app.handle())?;

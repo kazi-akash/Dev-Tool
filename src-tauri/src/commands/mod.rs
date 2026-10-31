@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod developers;
 pub mod diagnosis;
 pub mod processes;

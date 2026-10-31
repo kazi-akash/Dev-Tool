@@ -80,7 +80,6 @@ impl StorageState {
     }
 
     /// Latest completed (or partial) result, for the cleanup candidate checks.
-    #[allow(dead_code)] // used by the cleanup actions (Phase 12)
     pub fn latest_result(&self) -> Option<ScanResult> {
         lock(&self.result).clone()
     }

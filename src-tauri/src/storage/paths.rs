@@ -116,13 +116,6 @@ pub fn is_protected(p: &Path, user_profile: Option<&Path>) -> bool {
     false
 }
 
-/// `Some(path)` is `inside` `root` (strictly below it, component-wise, case-insensitive).
-#[allow(dead_code)] // used by the delete actions (Phase 12)
-pub fn is_strictly_inside(path: &Path, root: &Path) -> bool {
-    let (p, r) = (normalize(path), normalize(root));
-    p.len() > r.len() && p.starts_with(&r) && p.as_bytes()[r.len()] == b'\\'
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,15 +211,5 @@ mod tests {
             &pp("C:\\Users\\alice\\proj\\node_modules"),
             None
         ));
-    }
-
-    #[test]
-    fn strictly_inside() {
-        assert!(is_strictly_inside(&pp("C:\\a\\b\\c"), &pp("c:\\A\\B")));
-        assert!(!is_strictly_inside(&pp("C:\\a\\b"), &pp("C:\\a\\b")));
-        assert!(
-            !is_strictly_inside(&pp("C:\\a\\bc"), &pp("C:\\a\\b")),
-            "prefix is not a parent"
-        );
     }
 }

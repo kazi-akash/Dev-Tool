@@ -121,7 +121,6 @@ pub fn merge_stats(containers: &mut [Container], output: &str) {
 }
 
 /// Container name or id as accepted by Docker. Rejects anything that could be a flag or contain shell syntax.
-#[allow(dead_code)] // consumed by the stop-container action (Phase 12)
 pub fn is_valid_container_ref(s: &str) -> bool {
     let mut chars = s.chars();
     let Some(first) = chars.next() else {
@@ -134,7 +133,13 @@ pub fn is_valid_container_ref(s: &str) -> bool {
 
 /// Run `docker` with a hard timeout and no console window. Returns stdout.
 pub fn run_docker(args: &[&str]) -> Result<String, String> {
-    let mut cmd = Command::new("docker");
+    run_program("docker", args, CLI_TIMEOUT)
+}
+
+/// Run a program (no shell, fixed argument list) with a hard timeout and no console window.
+/// Returns stdout; on failure the first line of stderr.
+pub fn run_program(program: &str, args: &[&str], timeout: Duration) -> Result<String, String> {
+    let mut cmd = Command::new(program);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     {
@@ -143,13 +148,17 @@ pub fn run_docker(args: &[&str]) -> Result<String, String> {
     }
     let mut child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            "Docker CLI not found".to_string()
+            if program == "docker" {
+                "Docker CLI not found".to_string()
+            } else {
+                format!("{program} not found")
+            }
         } else {
-            format!("cannot start docker: {e}")
+            format!("cannot start {program}: {e}")
         }
     })?;
 
-    let deadline = Instant::now() + CLI_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -164,16 +173,19 @@ pub fn run_docker(args: &[&str]) -> Result<String, String> {
                 if let Some(mut s) = child.stderr.take() {
                     let _ = s.read_to_string(&mut err);
                 }
-                let first = err.lines().next().unwrap_or("docker returned an error");
+                let first = err
+                    .lines()
+                    .next()
+                    .unwrap_or("the command returned an error");
                 return Err(first.chars().take(160).collect());
             }
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("docker did not respond in time".into());
+                return Err(format!("{program} did not respond in time"));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => return Err(format!("docker wait failed: {e}")),
+            Err(e) => return Err(format!("{program} wait failed: {e}")),
         }
     }
 }
