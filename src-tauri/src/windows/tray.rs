@@ -1,9 +1,9 @@
 //! System tray: menu, left-click to open, route navigation events to the frontend.
 
 use tauri::{
+    AppHandle, Emitter,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter,
 };
 
 use super::window::show_main_window;
@@ -38,7 +38,16 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 
     let menu = Menu::with_items(
         app,
-        &[&open, &sep_top, &status, &scan, &diagnosis, &settings, &sep_bottom, &quit],
+        &[
+            &open,
+            &sep_top,
+            &status,
+            &scan,
+            &diagnosis,
+            &settings,
+            &sep_bottom,
+            &quit,
+        ],
     )?;
 
     let mut builder = TrayIconBuilder::with_id("main")
