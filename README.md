@@ -2,11 +2,19 @@
 
 Windows developer-system health assistant. Answers: *why is my dev PC slow, out of RAM, or out of disk, and what can I safely do about it?*
 
-Status: **Phase 0 complete** (environment + minimal Tauri 2 shell builds and runs). Later phases not started.
+Status: **Phase 1 complete** (application shell: tray, sidebar, routing, theme, settings). Pages other than Settings are placeholders. Monitoring starts in Phase 2.
 
 ## Stack
 
-Tauri 2, React 19, TypeScript 6, Vite 8, Rust (stable, MSVC). Planned: Tailwind, shadcn/ui, SQLx/SQLite, sysinfo, windows-rs, Recharts.
+Tauri 2, React 19, TypeScript 6, Vite 8, Tailwind CSS 4, shadcn/ui-style components (Radix + lucide-react), react-router (HashRouter), Rust (stable, MSVC). Planned: SQLx/SQLite, sysinfo, windows-rs, Recharts.
+
+## Shell behavior (Phase 1)
+
+- Sidebar: Dashboard, Processes, Storage, Diagnosis, Actions, History, Settings.
+- Theme: System / Light / Dark, stored in `localStorage` (`devpilot.settings.v1`). Moves to SQLite in Phase 16.
+- Tray menu: Open DevPilot, System Status, Scan Storage, Run Diagnosis, Settings, Quit. Left-click on tray icon opens the window.
+- Tray entries show the window and emit a `navigate` event with an allow-listed route (`src-tauri/src/windows/tray.rs`); the frontend never receives arbitrary commands.
+- Closing the window hides to tray; monitoring keeps running. Quit only via tray menu.
 
 ## Prerequisites (Windows 11)
 
@@ -31,9 +39,12 @@ Notes:
 pnpm install          # JS deps
 pnpm tauri dev        # run app (Vite + Rust, hot reload)
 pnpm build            # type-check + frontend bundle
+pnpm test             # Vitest (happy-dom)
 pnpm tauri build      # release bundle (Phase 20)
 cd src-tauri; cargo test
 ```
+
+Test env note: Vitest uses `happy-dom`, not `jsdom`. jsdom pulls undici 8, which crashes on Node 22.13.1.
 
 ## Layout
 
@@ -48,9 +59,11 @@ devpilot/
 
 Target structure is in the master spec; modules are added phase by phase.
 
-## Phase 0 verification
+## Verification
 
-- `cargo build`: OK
+Phase 1:
 - `pnpm build`: OK
-- `cargo test`: OK, 0 tests (no logic yet)
-- `pnpm tauri dev`: window "DevPilot" opened, ~38 MB working set for the Rust process
+- `pnpm test`: 4 passed (nav order, routing, theme persistence, corrupt-settings fallback)
+- `cargo test`: 2 passed (tray menu route mapping, unknown ids rejected)
+- `pnpm tauri dev`: window renders sidebar + settings, Rust process ~36 MB working set
+- Not yet verified: tray icon visuals and menu clicks (manual check needed)
