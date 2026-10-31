@@ -1,8 +1,13 @@
 import "@testing-library/jest-dom/vitest";
-import { afterEach, beforeEach } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
+import { ipc } from "./ipc-mock";
 
-// jsdom has no matchMedia; settings/theme code needs it.
+// Every test talks to the in-memory bridge, never to a real Tauri runtime.
+vi.mock("@tauri-apps/api/core", () => ({ invoke: ipc.invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: ipc.listen }));
+
+// jsdom-family environments have no matchMedia; settings/theme code needs it.
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: (query: string) => ({
@@ -18,6 +23,7 @@ Object.defineProperty(window, "matchMedia", {
 });
 
 beforeEach(() => {
+  ipc.reset();
   localStorage.clear();
   window.location.hash = "#/";
   document.documentElement.classList.remove("dark");

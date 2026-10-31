@@ -33,6 +33,8 @@ export interface ProcessInfo {
   memoryBytes: number;
   category: Category;
   evidence: Evidence;
+  /** Fine-grained markers such as gradle, nextjs, laragon. */
+  tags: string[];
 }
 
 export type SortBy = "memory" | "cpu" | "name";

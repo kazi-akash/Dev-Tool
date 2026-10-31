@@ -22,3 +22,29 @@ export function formatUptime(secs: number): string {
 export function formatPercent(value: number): string {
   return `${Number.isFinite(value) ? Math.round(value) : 0}%`;
 }
+
+/** 0.5 -> "30 min", 5 -> "5.0 h", 100 -> "4 days". */
+export function formatHours(h: number): string {
+  if (!Number.isFinite(h) || h < 0) return "unknown";
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`;
+  if (h < 48) return `${h.toFixed(1)} h`;
+  return `${Math.round(h / 24)} days`;
+}
+
+/** Relative time: "just now", "5 min ago", "3 h ago", "2 days ago". */
+export function timeAgo(thenMs: number, nowMs: number = Date.now()): string {
+  const s = Math.max(0, Math.round((nowMs - thenMs) / 1000));
+  if (s < 45) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+export function formatDateTime(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/** Unix seconds -> short date, or "unknown". */
+export function formatDate(secs: number | null): string {
+  return secs ? new Date(secs * 1000).toLocaleDateString(undefined, { dateStyle: "medium" }) : "unknown";
+}

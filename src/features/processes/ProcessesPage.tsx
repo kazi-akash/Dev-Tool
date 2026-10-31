@@ -5,6 +5,7 @@ import { useProcesses } from "@/hooks/useProcesses";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { CATEGORIES, type Category, type ProcessInfo, type SortBy } from "@/types/process";
+import { DockerPanel } from "./DockerPanel";
 
 const SORTS: { value: SortBy; label: string }[] = [
   { value: "memory", label: "Memory" },
@@ -70,6 +71,8 @@ export function ProcessesPage() {
             : "Waiting for the first sample..."}
         </p>
       </div>
+
+      <DockerPanel />
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
         <div className="flex items-center gap-1" role="group" aria-label="Sort by">
