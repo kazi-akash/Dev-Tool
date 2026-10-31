@@ -15,6 +15,7 @@ Tauri 2, React 19, TypeScript 6, Vite 8, Tailwind CSS 4, shadcn/ui-style compone
 - Tray menu: Open DevPilot, System Status, Scan Storage, Run Diagnosis, Settings, Quit. Left-click on tray icon opens the window.
 - Tray entries show the window and emit a `navigate` event with an allow-listed route (`src-tauri/src/windows/tray.rs`); the frontend never receives arbitrary commands.
 - Closing the window hides to tray; monitoring keeps running. Quit only via tray menu.
+- Single instance: a second launch exits and re-shows the running window (no duplicate tray icon).
 
 ## Prerequisites (Windows 11)
 
@@ -66,4 +67,6 @@ Phase 1:
 - `pnpm test`: 4 passed (nav order, routing, theme persistence, corrupt-settings fallback)
 - `cargo test`: 2 passed (tray menu route mapping, unknown ids rejected)
 - `pnpm tauri dev`: window renders sidebar + settings, Rust process ~36 MB working set
-- Not yet verified: tray icon visuals and menu clicks (manual check needed)
+- `cargo clippy -D warnings`, `cargo fmt --check`, `tsc --noEmit`: clean
+- Runtime: close hides window and keeps process alive; second launch exits and re-shows window
+- Not yet verified: tray icon visuals and menu clicks (manual check needed; Win11 overflow not scriptable)
