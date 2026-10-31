@@ -2,7 +2,7 @@
 
 Windows developer-system health assistant. Answers: *why is my dev PC slow, out of RAM, or out of disk, and what can I safely do about it?*
 
-Status: **Phase 2 complete** (shell + live system monitor: RAM, CPU, disks, uptime, process count). Dashboard shows basic live cards; Processes, Storage, Diagnosis, Actions and History are placeholders. See [docs/MONITORING.md](docs/MONITORING.md).
+Status: **Phase 3 complete** (shell + live system monitor + process monitor with evidence-based categories). Dashboard and Processes pages are live; Storage, Diagnosis, Actions and History are placeholders. See [docs/MONITORING.md](docs/MONITORING.md).
 
 ## Stack
 
@@ -61,6 +61,13 @@ devpilot/
 Target structure is in the master spec; modules are added phase by phase.
 
 ## Verification
+
+Phase 3:
+- `pnpm test`: 14 passed (adds Processes page: rows, redacted detail, category/sort sent to Rust)
+- `cargo test`: 51 passed (classifier rules and evidence, redaction, query/sort/limit, store incl. poisoned lock, real-OS collector test)
+- `cargo clippy -D warnings`, `tsc --noEmit`: clean
+- Runtime on the real machine: Chrome/Brave BROWSER, Kiro IDE (path evidence), explorer SYSTEM; ~0.45% CPU with the page open
+- Known limit: `claude.exe`, `Dev tools` of unknown vendors fall to OTHER by design
 
 Phase 2:
 - `pnpm test`: 11 passed (adds format helpers, dashboard rendering from a snapshot)
