@@ -1,10 +1,11 @@
+import { invoke } from "@tauri-apps/api/core";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 export type ThemeMode = "system" | "light" | "dark";
 
 export interface Settings {
   theme: ThemeMode;
-  /** System metrics polling interval in seconds (consumed by the Rust monitor from Phase 2). */
+  /** System metrics polling interval in seconds; applied to the Rust monitor (valid range 1-60). */
   monitorIntervalSec: number;
 }
 
@@ -48,6 +49,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       // storage unavailable: keep in-memory settings only
     }
   }, [settings]);
+
+  // Push the interval to the Rust monitor on startup and on change. Rust validates the range.
+  useEffect(() => {
+    invoke("set_monitor_interval", { secs: settings.monitorIntervalSec }).catch(() => {
+      // not running inside Tauri, or value rejected: monitor keeps its current interval
+    });
+  }, [settings.monitorIntervalSec]);
 
   useEffect(() => {
     applyTheme(settings.theme);

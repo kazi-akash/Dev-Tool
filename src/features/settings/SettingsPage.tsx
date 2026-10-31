@@ -45,9 +45,7 @@ export function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Monitoring interval</CardTitle>
-          <CardDescription>
-            How often system metrics are sampled. Applied once the monitor is added (Phase 2).
-          </CardDescription>
+          <CardDescription>How often system metrics are sampled.</CardDescription>
         </CardHeader>
         <CardContent className="flex gap-2">
           {INTERVALS.map((sec) => (
