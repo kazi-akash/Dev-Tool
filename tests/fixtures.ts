@@ -150,6 +150,7 @@ export function preview(over: Partial<ActionPreview> = {}): ActionPreview {
     requiresConfirmation: true,
     requiresDoubleConfirmation: true,
     reversible: false,
+    reversibility: "IRREVERSIBLE",
     ...over,
   };
 }

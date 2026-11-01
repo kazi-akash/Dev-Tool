@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { call, errorMessage } from "@/lib/ipc";
 import { formatBytes } from "@/lib/format";
 import { RISK_TONE } from "@/lib/status";
+import { ActionResult, REVERSIBILITY_TEXT, ReversibilityBadge } from "@/components/ActionResult";
 import type { ActionPreview, ActionRecord } from "@/types/api";
 
 interface Props {
@@ -19,6 +20,9 @@ interface Props {
  * dialog is the user-facing half of that contract, not the enforcement.
  */
 export function ActionDialog({ actionId, params, onClose }: Props) {
+  const [permanent, setPermanent] = useState(false);
+  // "Delete permanently" is an explicit choice; changing it re-previews so the warnings match.
+  const effective = useMemo(() => (actionId === "cleanup.path" && permanent ? { ...params, permanent: true } : params), [actionId, params, permanent]);
   const [preview, setPreview] = useState<ActionPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -29,13 +33,13 @@ export function ActionDialog({ actionId, params, onClose }: Props) {
 
   useEffect(() => {
     let alive = true;
-    call<ActionPreview>("preview_action", { actionId, params })
+    call<ActionPreview>("preview_action", { actionId, params: effective })
       .then((p) => alive && setPreview(p))
       .catch((e) => alive && setError(errorMessage(e)));
     return () => {
       alive = false;
     };
-  }, [actionId, params]);
+  }, [actionId, effective]);
 
   useEffect(() => {
     cancelRef.current?.focus();
@@ -57,7 +61,7 @@ export function ActionDialog({ actionId, params, onClose }: Props) {
     setRunning(true);
     setError(null);
     try {
-      setRecord(await call<ActionRecord>("execute_action", { actionId, params, confirmed, doubleConfirmed }));
+      setRecord(await call<ActionRecord>("execute_action", { actionId, params: effective, confirmed, doubleConfirmed }));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -76,7 +80,10 @@ export function ActionDialog({ actionId, params, onClose }: Props) {
               <h2 id="action-title" className="text-base font-semibold">
                 {preview.title}
               </h2>
-              <Badge tone={RISK_TONE[preview.risk]}>{preview.risk}</Badge>
+              <span className="flex shrink-0 gap-1">
+                <Badge tone={RISK_TONE[preview.risk]}>{preview.risk}</Badge>
+                <ReversibilityBadge value={preview.reversibility} />
+              </span>
             </div>
             <p className="mt-2 text-sm text-muted-foreground">{preview.summary}</p>
 
@@ -92,11 +99,20 @@ export function ActionDialog({ actionId, params, onClose }: Props) {
               ))}
             </ul>
 
-            {preview.estimatedBenefitBytes != null && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Expected recovery: <span className="font-medium text-foreground">{formatBytes(preview.estimatedBenefitBytes)}</span>
-                {preview.reversible ? " · can be undone" : " · cannot be undone"}
-              </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {preview.estimatedBenefitBytes != null && (
+                <>
+                  Expected recovery: <span className="font-medium text-foreground">{formatBytes(preview.estimatedBenefitBytes)}</span> ·{" "}
+                </>
+              )}
+              {REVERSIBILITY_TEXT[preview.reversibility].help}
+            </p>
+
+            {!record && actionId === "cleanup.path" && (permanent || preview.reversibility === "RECOVERABLE") && (
+              <label className="mt-2 flex items-start gap-2 text-xs">
+                <input type="checkbox" className="mt-0.5" checked={permanent} onChange={(e) => setPermanent(e.target.checked)} />
+                <span>Delete permanently instead of moving to the Recycle Bin (frees the space now, cannot be undone).</span>
+              </label>
             )}
 
             {preview.warnings.length > 0 && (
@@ -122,11 +138,7 @@ export function ActionDialog({ actionId, params, onClose }: Props) {
           </>
         )}
 
-        {record && (
-          <p role="status" className={`mt-4 rounded-md border p-2 text-sm ${record.success ? "border-ok/40 bg-ok/10" : "border-danger/40 bg-danger/10"}`}>
-            {record.summary}
-          </p>
-        )}
+        {record && <ActionResult record={record} />}
         {error && (
           <p role="alert" className="mt-4 rounded-md border border-danger/40 bg-danger/10 p-2 text-sm">
             {error}
@@ -139,7 +151,7 @@ export function ActionDialog({ actionId, params, onClose }: Props) {
           </Button>
           {!record && preview && (
             <Button size="sm" variant={needsDouble ? "destructive" : "default"} disabled={!canRun} onClick={run}>
-              {running ? "Working..." : needsDouble ? "Delete permanently" : "Run"}
+              {running ? "Working..." : needsDouble ? (preview.reversibility === "IRREVERSIBLE" ? "Delete permanently" : "Run") : "Run"}
             </Button>
           )}
         </div>

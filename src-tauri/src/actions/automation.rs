@@ -11,7 +11,7 @@ use serde_json::json;
 
 use super::engine::ActionEngine;
 use super::model::{Ctx, Facts};
-use super::real::{RealKiller, RealRunner};
+use super::real::{RealKiller, RealProbe, RealRunner, RealTrasher};
 use crate::monitoring::disks::DiskState;
 use crate::monitoring::service::MonitorState;
 
@@ -92,6 +92,8 @@ pub fn start(actions: Arc<ActionsState>, monitor: Arc<MonitorState>) {
                     facts: &facts,
                     runner: &RealRunner,
                     killer: &RealKiller,
+                    probe: &RealProbe,
+                    trasher: &RealTrasher,
                 };
                 // Success or failure, wait before trying again; the attempt is in the action history either way.
                 *actions

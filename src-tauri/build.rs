@@ -13,6 +13,7 @@ const COMMANDS: &[&str] = &[
     "get_processes",
     "get_workloads",
     "get_docker_status",
+    "get_docker_breakdown",
     "start_storage_scan",
     "cancel_storage_scan",
     "get_storage_scan",

@@ -94,6 +94,10 @@ pub fn stored_action(a: &crate::actions::engine::ActionRecord) -> StoredAction {
         success: a.success,
         summary: a.summary.clone(),
         freed_bytes: a.freed_bytes.map(|b| b as i64),
+        reversibility: text(&a.reversibility),
+        status: text(&a.status),
+        ram_recovered_bytes: a.measurement.as_ref().and_then(|m| m.ram_recovered_bytes),
+        disk_recovered_bytes: a.measurement.as_ref().and_then(|m| m.disk_recovered_bytes),
     }
 }
 
@@ -239,6 +243,10 @@ mod tests {
             success: true,
             summary: "s".into(),
             freed_bytes: None,
+            reversibility: "REVERSIBLE".into(),
+            status: "SUCCESS".into(),
+            ram_recovered_bytes: None,
+            disk_recovered_bytes: None,
         });
         drop(handle);
         let mut buf = vec![];

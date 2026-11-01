@@ -28,6 +28,7 @@ ureq = { version = "3.5.0", features = ["json"] }
 keyring = { version = "3", features = ["windows-native"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 tokio = { version = "1.54.1", features = ["rt", "sync", "time", "macros"] }
+trash = "5"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -10,6 +10,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 const CACHE_TTL: Duration = Duration::from_secs(10);
+pub mod attribution;
+
 const CLI_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -22,6 +24,9 @@ pub struct Container {
     pub running: bool,
     pub memory_bytes: Option<u64>,
     pub cpu_percent: Option<f32>,
+    /// Explicit `--memory` limit from `docker inspect`; `None` means no limit was set (Docker
+    /// stats then reports the whole VM as the limit, which is not a container limit).
+    pub memory_limit_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -91,6 +96,7 @@ pub fn parse_ps(output: &str) -> Vec<Container> {
                 running: state == "running" || (state.is_empty() && status.starts_with("Up")),
                 memory_bytes: None,
                 cpu_percent: None,
+                memory_limit_bytes: None,
             }
         })
         .filter(|c| !c.id.is_empty())
@@ -117,6 +123,28 @@ pub fn merge_stats(containers: &mut [Container], output: &str) {
         };
         c.memory_bytes = parse_mem_usage(str_field(&v, "MemUsage"));
         c.cpu_percent = str_field(&v, "CPUPerc").trim_end_matches('%').parse().ok();
+    }
+}
+
+/// Parse `docker inspect --format "{{.Id}}|{{.HostConfig.Memory}}"` into explicit limits.
+/// A limit of 0 means "none set" and is left out, so an absent value is never shown as a limit.
+pub fn merge_limits(containers: &mut [Container], output: &str) {
+    for line in output.lines() {
+        let Some((id, limit)) = line.trim().split_once('|') else {
+            continue;
+        };
+        let Ok(limit) = limit.trim().parse::<u64>() else {
+            continue;
+        };
+        if limit == 0 || id.len() < 12 {
+            continue;
+        }
+        if let Some(c) = containers
+            .iter_mut()
+            .find(|c| !c.id.is_empty() && id.starts_with(&c.id))
+        {
+            c.memory_limit_bytes = Some(limit);
+        }
     }
 }
 
@@ -200,6 +228,19 @@ fn query_docker() -> DockerStatus {
         // Stats are best-effort: containers still list without them.
         if let Ok(stats) = run_docker(&["stats", "--no-stream", "--format", "{{json .}}"]) {
             merge_stats(&mut containers, &stats);
+        }
+    }
+    // Explicit limits are best-effort too. Only ids from `docker ps` that pass validation are passed on.
+    let ids: Vec<String> = containers
+        .iter()
+        .filter(|c| c.running && is_valid_container_ref(&c.id))
+        .map(|c| c.id.clone())
+        .collect();
+    if !ids.is_empty() {
+        let mut args = vec!["inspect", "--format", "{{.Id}}|{{.HostConfig.Memory}}"];
+        args.extend(ids.iter().map(String::as_str));
+        if let Ok(out) = run_docker(&args) {
+            merge_limits(&mut containers, &out);
         }
     }
     let total = containers.iter().filter_map(|c| c.memory_bytes).sum();
@@ -333,5 +374,34 @@ not json at all
         // Whatever the machine has installed, this must return a status, never panic.
         let s = DockerMonitor::default().status(true);
         assert_eq!(s.available, s.error.is_none());
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    fn ct(id: &str) -> Container {
+        Container {
+            id: id.into(),
+            name: "n".into(),
+            image: "i".into(),
+            status: "Up".into(),
+            running: true,
+            memory_bytes: None,
+            cpu_percent: None,
+            memory_limit_bytes: None,
+        }
+    }
+
+    #[test]
+    fn explicit_limits_are_merged_and_zero_means_none() {
+        let mut v = vec![ct("abc123def456"), ct("fff000aaa111")];
+        merge_limits(
+            &mut v,
+            "abc123def456aaaabbbbccccddddeeeeffff0000111122223333444455556666|536870912\nfff000aaa111aaaabbbbccccddddeeeeffff0000111122223333444455556666|0\nbad line\n",
+        );
+        assert_eq!(v[0].memory_limit_bytes, Some(536_870_912));
+        assert_eq!(v[1].memory_limit_bytes, None);
     }
 }

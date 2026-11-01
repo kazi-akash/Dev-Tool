@@ -91,7 +91,7 @@ describe("docker panel", () => {
       available: true,
       error: null,
       totalMemoryBytes: 900 * 1024 * 1024,
-      containers: [{ id: "abc", name: "redis-idle", image: "redis:7", status: "Up", running: true, memoryBytes: 900 * 1024 * 1024, cpuPercent: 0.2 }],
+      containers: [{ id: "abc", name: "redis-idle", image: "redis:7", status: "Up", running: true, memoryBytes: 900 * 1024 * 1024, cpuPercent: 0.2, memoryLimitBytes: null }],
     });
     ipc.on("preview_action", preview({ actionId: "docker.stop_container", title: "Stop container redis-idle", risk: "LOW", requiresConfirmation: false, requiresDoubleConfirmation: false, reversible: true, warnings: [], estimatedBenefitBytes: null }));
     const user = userEvent.setup();
@@ -100,5 +100,31 @@ describe("docker panel", () => {
     expect(await screen.findByText("Stop container redis-idle")).toBeInTheDocument();
     expect(ipc.calledWith("preview_action")[0].args).toMatchObject({ actionId: "docker.stop_container", params: { container: "redis-idle" } });
     expect(ipc.calledWith("execute_action")).toHaveLength(0);
+  });
+});
+
+describe("docker attribution", () => {
+  it("shows host memory first, container figures as included, and unavailable memory as unavailable", async () => {
+    setup({ available: true, error: null, totalMemoryBytes: 0, containers: [] });
+    ipc.on("get_docker_breakdown", {
+      hostTotalBytes: 5.8 * GB,
+      wslVmBytes: 4.4 * GB,
+      desktopBackendBytes: 1.4 * GB,
+      containers: [
+        { id: "a", name: "nidustime-api", image: "api:1", status: "Up", running: true, memoryBytes: 1.4 * GB, cpuPercent: 1, memoryLimitBytes: 2 * GB },
+        { id: "b", name: "odd", image: "x", status: "Up", running: true, memoryBytes: null, cpuPercent: null, memoryLimitBytes: null },
+      ],
+      containersReportedBytes: 1.4 * GB,
+      unattributedVmBytes: null,
+      level: "PARTIAL",
+      notes: ["1 running container(s) reported no memory figure; they are listed without one, not as zero."],
+    });
+    render(<ProcessesPage />);
+    expect(await screen.findByText(/Docker \/ WSL2 host memory: 5.8 GB/)).toBeInTheDocument();
+    expect(screen.getByText(/included above, not added/)).toBeInTheDocument();
+    expect(screen.getByText("memory unavailable")).toBeInTheDocument();
+    expect(screen.getByText("limit 2.0 GB")).toBeInTheDocument();
+    expect(screen.getByText("no limit set")).toBeInTheDocument();
+    expect(screen.getByText(/not as zero/)).toBeInTheDocument();
   });
 });

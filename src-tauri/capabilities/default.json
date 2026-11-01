@@ -18,6 +18,7 @@
                         "allow-get-processes",
                         "allow-get-workloads",
                         "allow-get-docker-status",
+                        "allow-get-docker-breakdown",
                         "allow-start-storage-scan",
                         "allow-cancel-storage-scan",
                         "allow-get-storage-scan",

@@ -50,6 +50,13 @@ pub struct StoredAction {
     pub success: bool,
     pub summary: String,
     pub freed_bytes: Option<i64>,
+    /// REVERSIBLE / RECOVERABLE / IRREVERSIBLE, or UNKNOWN for rows older than the verification step.
+    pub reversibility: String,
+    /// SUCCESS / UNVERIFIED / NOT_EFFECTIVE / FAILED, or UNKNOWN.
+    pub status: String,
+    /// Measured change in available RAM (negative when use grew); `None` when not measurable.
+    pub ram_recovered_bytes: Option<i64>,
+    pub disk_recovered_bytes: Option<i64>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -421,8 +428,8 @@ impl Database {
 
     pub async fn insert_action(&self, a: &StoredAction) -> Result<(), String> {
         sqlx::query(
-            "INSERT INTO action_log (ts_ms, action_id, name, risk, automated, success, summary, freed_bytes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO action_log (ts_ms, action_id, name, risk, automated, success, summary, freed_bytes, reversibility, status, ram_recovered_bytes, disk_recovered_bytes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(a.ts_ms)
         .bind(&a.action_id)
@@ -432,6 +439,10 @@ impl Database {
         .bind(a.success)
         .bind(&a.summary)
         .bind(a.freed_bytes)
+        .bind(&a.reversibility)
+        .bind(&a.status)
+        .bind(a.ram_recovered_bytes)
+        .bind(a.disk_recovered_bytes)
         .execute(&self.pool)
         .await
         .map_err(err)?;
@@ -456,6 +467,10 @@ impl Database {
                 success: r.get("success"),
                 summary: r.get("summary"),
                 freed_bytes: r.get("freed_bytes"),
+                reversibility: r.get("reversibility"),
+                status: r.get("status"),
+                ram_recovered_bytes: r.get("ram_recovered_bytes"),
+                disk_recovered_bytes: r.get("disk_recovered_bytes"),
             })
             .collect())
     }
@@ -714,6 +729,10 @@ mod tests {
                 success: i != 2,
                 summary: format!("n{i}"),
                 freed_bytes: (i == 0).then_some(42),
+                reversibility: "RECOVERABLE".into(),
+                status: "SUCCESS".into(),
+                ram_recovered_bytes: Some(-5),
+                disk_recovered_bytes: None,
             })
             .await
             .unwrap();
@@ -722,6 +741,8 @@ mod tests {
         assert_eq!(a.len(), 2);
         assert_eq!(a[0].summary, "n2");
         assert!(!a[0].success && a[1].automated);
+        assert_eq!(a[0].reversibility, "RECOVERABLE");
+        assert_eq!(a[0].ram_recovered_bytes, Some(-5), "negative measurements survive storage");
         assert_eq!(
             db.recent_actions(10).await.unwrap()[2].freed_bytes,
             Some(42)

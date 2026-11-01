@@ -6,11 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAsync } from "@/hooks/useAsync";
 import { formatBytes } from "@/lib/format";
 import { call } from "@/lib/ipc";
-import type { DockerStatus } from "@/types/api";
+import type { DockerBreakdown, DockerStatus } from "@/types/api";
 
 /** Containers and what they hold. Docker is optional: when it is missing or stopped this just says why. */
 export function DockerPanel() {
   const docker = useAsync(() => call<DockerStatus>("get_docker_status"), { intervalMs: 15_000 });
+  const breakdown = useAsync(() => call<DockerBreakdown | null>("get_docker_breakdown"), { intervalMs: 15_000 });
   const [stopName, setStopName] = useState<string | null>(null);
   const s = docker.data;
 
@@ -26,6 +27,7 @@ export function DockerPanel() {
         {!s && !docker.error && <p className="text-sm text-muted-foreground">Checking Docker...</p>}
         {!s && docker.error && <p className="text-sm text-muted-foreground">Docker details unavailable: {docker.error}</p>}
         {s && !s.available && <p className="text-sm text-muted-foreground">Docker details unavailable: {s.error ?? "unknown reason"}. Everything else keeps working.</p>}
+        {breakdown.data && <BreakdownSummary b={breakdown.data} />}
         {s?.available && s.containers.length === 0 && <p className="text-sm text-muted-foreground">No containers.</p>}
         {s?.available && s.containers.length > 0 && (
           <ul className="divide-y">
@@ -59,5 +61,42 @@ export function DockerPanel() {
         />
       )}
     </Card>
+  );
+}
+
+/** Host memory first (what reduces free RAM); container figures are inside it and are never added. */
+function BreakdownSummary({ b }: { b: DockerBreakdown }) {
+  return (
+    <div className="mb-3 space-y-1 border-b pb-3 text-sm">
+      <p>
+        <span className="font-medium">Docker / WSL2 host memory: {formatBytes(b.hostTotalBytes)}</span>
+        <span className="text-xs text-muted-foreground">
+          {" "}
+          ({b.wslVmBytes != null ? `WSL2 VM ${formatBytes(b.wslVmBytes)} · ` : ""}Docker Desktop/backend {formatBytes(b.desktopBackendBytes)})
+        </span>
+      </p>
+      {b.containersReportedBytes != null && (
+        <p className="text-xs text-muted-foreground">
+          Containers report {formatBytes(b.containersReportedBytes)} inside the VM (included above, not added)
+          {b.unattributedVmBytes != null ? ` · ${formatBytes(b.unattributedVmBytes)} of the VM is not attributable to a container` : ""}.
+        </p>
+      )}
+      {b.containers.length > 0 && (
+        <ul className="text-xs tabular-nums">
+          {b.containers.map((c) => (
+            <li key={c.id} className="flex gap-2">
+              <span className="min-w-0 flex-1 truncate">{c.name}</span>
+              <span>{c.memoryBytes != null ? formatBytes(c.memoryBytes) : "memory unavailable"}</span>
+              <span className="text-muted-foreground">{c.memoryLimitBytes != null ? `limit ${formatBytes(c.memoryLimitBytes)}` : "no limit set"}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {b.notes.map((n) => (
+        <p key={n} className="text-xs text-muted-foreground">
+          {n}
+        </p>
+      ))}
+    </div>
   );
 }

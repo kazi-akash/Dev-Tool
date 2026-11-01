@@ -146,6 +146,7 @@ mod tests {
             running: true,
             memory_bytes: Some(mem_mb * 1024 * 1024),
             cpu_percent: Some(cpu),
+            memory_limit_bytes: None,
         }
     }
 

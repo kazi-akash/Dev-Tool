@@ -100,6 +100,7 @@ pub fn run() {
             commands::processes::get_processes,
             commands::developers::get_workloads,
             commands::developers::get_docker_status,
+            commands::developers::get_docker_breakdown,
             commands::storage::start_storage_scan,
             commands::storage::cancel_storage_scan,
             commands::storage::get_storage_scan,

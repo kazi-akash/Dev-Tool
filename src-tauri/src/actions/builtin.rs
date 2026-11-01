@@ -9,7 +9,8 @@ use super::fs_clean::{
     clean_contents, is_reparse_point, plan_clean_contents, remove_path, tree_size,
 };
 use super::model::{
-    Action, ActionError, ActionSpec, Ctx, Outcome, Preview, PreviewItem, RiskLevel,
+    Action, ActionError, ActionSpec, Ctx, Outcome, Preview, PreviewItem, Reversibility, RiskLevel,
+    Verification,
 };
 use crate::docker::is_valid_container_ref;
 use crate::processes::model::Category;
@@ -37,6 +38,7 @@ fn make_preview(
         requires_confirmation: risk.requires_confirmation(),
         requires_double_confirmation: risk.requires_double_confirmation(),
         reversible: spec.reversible,
+        reversibility: spec.reversibility,
     }
 }
 
@@ -60,6 +62,8 @@ fn outcome(
         freed_bytes: freed,
         details,
         rollback,
+        reversibility: spec.reversibility,
+        context: None,
     }
 }
 
@@ -74,6 +78,7 @@ const STOP_CONTAINER: ActionSpec = ActionSpec {
     estimated_benefit: "Frees the container's memory",
     automation_eligible: false,
     reversible: true,
+    reversibility: Reversibility::Reversible,
 };
 
 impl Action for StopContainer {
@@ -118,6 +123,27 @@ impl Action for StopContainer {
         ))
     }
 
+    fn verify(&self, params: &Value, _o: &Outcome, ctx: &Ctx) -> Verification {
+        let Ok(name) = str_param(params, "container") else {
+            return Verification::unverifiable("No container name to check.");
+        };
+        let filter = format!("name=^{name}$");
+        match ctx
+            .runner
+            .run("docker", &["ps", "--filter", &filter, "--format", "{{.Names}}"])
+        {
+            Ok(out) if out.trim().is_empty() => {
+                Verification::verified(format!("{name} is no longer in the running container list."))
+            }
+            Ok(_) => Verification::not_confirmed(format!("{name} still shows as running.")),
+            Err(e) => Verification::unverifiable(format!("Docker could not be queried: {e}")),
+        }
+    }
+
+    fn measure_note(&self) -> Option<&'static str> {
+        Some("Docker Desktop's WSL2 VM often keeps memory after a container stops, so RAM may not drop until the VM shrinks or WSL is shut down.")
+    }
+
     fn rollback(&self, o: &Outcome, ctx: &Ctx) -> Option<Result<String, ActionError>> {
         let name = o.rollback.as_ref()?.get("container")?.as_str()?;
         if !is_valid_container_ref(name) {
@@ -145,6 +171,7 @@ const WSL_SHUTDOWN: ActionSpec = ActionSpec {
     estimated_benefit: "Returns the WSL2 VM's memory",
     automation_eligible: false,
     reversible: false,
+    reversibility: Reversibility::Irreversible,
 };
 
 impl Action for WslShutdown {
@@ -162,6 +189,23 @@ impl Action for WslShutdown {
             None,
             vec!["Running terminals, dev servers and containers inside WSL will stop and unsaved work in them is lost.".into()],
         ))
+    }
+
+    fn verify(&self, _p: &Value, _o: &Outcome, ctx: &Ctx) -> Verification {
+        match ctx.probe.processes() {
+            None => Verification::unverifiable("The process list could not be read."),
+            Some(ps) => {
+                let vm = ps
+                    .iter()
+                    .filter(|p| p.name.to_lowercase().starts_with("vmmem"))
+                    .count();
+                if vm == 0 {
+                    Verification::verified("The WSL2 VM process (vmmem) is gone.")
+                } else {
+                    Verification::not_confirmed("The WSL2 VM process (vmmem) is still running.")
+                }
+            }
+        }
     }
 
     fn execute(&self, _params: &Value, ctx: &Ctx) -> Result<Outcome, ActionError> {
@@ -189,6 +233,7 @@ const GRADLE_STOP: ActionSpec = ActionSpec {
     estimated_benefit: "Frees the Gradle daemons' JVM memory",
     automation_eligible: false,
     reversible: false,
+    reversibility: Reversibility::Recoverable,
 };
 
 impl Action for GradleStop {
@@ -206,6 +251,22 @@ impl Action for GradleStop {
             None,
             vec!["A build that is running right now will be interrupted.".into()],
         ))
+    }
+
+    fn verify(&self, _p: &Value, _o: &Outcome, ctx: &Ctx) -> Verification {
+        match ctx.probe.processes() {
+            None => Verification::unverifiable("The process list could not be read."),
+            Some(ps) => {
+                let n = ps.iter().filter(|p| p.cmd.contains("gradledaemon")).count();
+                if n == 0 {
+                    Verification::verified("No Gradle daemon is running any more.")
+                } else {
+                    Verification::not_confirmed(format!(
+                        "{n} Gradle daemon(s) still run. `gradle --stop` only stops daemons of the same Gradle version; busy daemons are not stopped."
+                    ))
+                }
+            }
+        }
     }
 
     fn execute(&self, _params: &Value, ctx: &Ctx) -> Result<Outcome, ActionError> {
@@ -240,6 +301,7 @@ const TERMINATE_PROCESS: ActionSpec = ActionSpec {
     estimated_benefit: "Frees that process's memory",
     automation_eligible: false,
     reversible: false,
+    reversibility: Reversibility::Irreversible,
 };
 
 fn find_target<'a>(
@@ -306,6 +368,19 @@ impl Action for TerminateProcess {
         ))
     }
 
+    fn verify(&self, params: &Value, _o: &Outcome, ctx: &Ctx) -> Verification {
+        let Some(pid) = params.get("pid").and_then(Value::as_u64) else {
+            return Verification::unverifiable("No process id to check.");
+        };
+        match ctx.probe.processes() {
+            None => Verification::unverifiable("The process list could not be read."),
+            Some(ps) if ps.iter().any(|p| u64::from(p.pid) == pid) => {
+                Verification::not_confirmed(format!("PID {pid} is still running."))
+            }
+            Some(_) => Verification::verified(format!("PID {pid} is no longer running.")),
+        }
+    }
+
     fn execute(&self, params: &Value, ctx: &Ctx) -> Result<Outcome, ActionError> {
         let p = find_target(params, ctx)?;
         ctx.killer.kill(p.pid).map_err(ActionError::Failed)?;
@@ -325,11 +400,12 @@ pub struct CleanupPath;
 const CLEANUP_PATH: ActionSpec = ActionSpec {
     id: "cleanup.path",
     name: "Delete a scanned item",
-    description: "Permanently deletes one item found by the storage scanner. Refused for protected and do-not-touch locations.",
+    description: "Removes one item found by the storage scanner: moved to the Recycle Bin when it fits, otherwise deleted permanently (the preview says which). Refused for protected and do-not-touch locations.",
     risk_level: RiskLevel::Destructive,
     estimated_benefit: "Frees the item's disk space",
     automation_eligible: false,
-    reversible: false,
+    reversible: true,
+    reversibility: Reversibility::Recoverable,
 };
 
 struct CleanupTarget {
@@ -414,6 +490,51 @@ fn keeps_folder(kind: EntryKind) -> bool {
     matches!(kind, EntryKind::TempCache | EntryKind::PackageCache)
 }
 
+/// Items larger than this are not sent to the Recycle Bin by default: Windows may refuse or
+/// permanently delete items that do not fit, so the preview says "permanent" instead of promising
+/// a recovery it cannot guarantee.
+const RECYCLE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// How a cleanup will remove the item. Decided in one place so preview and execute agree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeleteMode {
+    /// Move the item to the Recycle Bin.
+    Recycle,
+    /// Delete the item permanently.
+    Permanent { too_large: bool },
+    /// Cache folders keep their folder and lose their contents permanently.
+    Contents,
+}
+
+fn delete_mode(t: &CleanupTarget, params: &Value) -> DeleteMode {
+    if keeps_folder(t.kind) {
+        DeleteMode::Contents
+    } else if params
+        .get("permanent")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        DeleteMode::Permanent { too_large: false }
+    } else if t.size > RECYCLE_MAX_BYTES {
+        DeleteMode::Permanent { too_large: true }
+    } else {
+        DeleteMode::Recycle
+    }
+}
+
+fn mode_reversibility(mode: DeleteMode) -> Reversibility {
+    match mode {
+        DeleteMode::Recycle => Reversibility::Recoverable,
+        _ => Reversibility::Irreversible,
+    }
+}
+
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 impl Action for CleanupPath {
     fn spec(&self) -> &'static ActionSpec {
         &CLEANUP_PATH
@@ -421,26 +542,39 @@ impl Action for CleanupPath {
 
     fn preview(&self, params: &Value, ctx: &Ctx) -> Result<Preview, ActionError> {
         let t = validate_cleanup(params, ctx)?;
-        let mut warnings =
-            vec!["Deleted permanently. It is not moved to the Recycle Bin.".to_string()];
+        let mode = delete_mode(&t, params);
+        let mut warnings = match mode {
+            DeleteMode::Recycle => vec![
+                "Moved to the Recycle Bin, not deleted. Disk space is released only when the Recycle Bin is emptied.".to_string(),
+            ],
+            DeleteMode::Permanent { too_large: true } => vec![format!(
+                "Larger than {}, so it is deleted permanently: it may not fit in the Recycle Bin.",
+                fmt_bytes(RECYCLE_MAX_BYTES)
+            )],
+            DeleteMode::Permanent { too_large: false } => {
+                vec!["Deleted permanently. It is not moved to the Recycle Bin.".to_string()]
+            }
+            DeleteMode::Contents => vec![
+                "Contents are deleted permanently (not sent to the Recycle Bin). Tools recreate caches when they need them.".to_string(),
+            ],
+        };
         if t.safety == Safety::RequiresReview {
             warnings.push(
                 "This may contain work that exists nowhere else. Check it before you confirm."
                     .into(),
             );
         }
-        if keeps_folder(t.kind) {
+        if mode == DeleteMode::Contents {
             warnings.push("The folder itself is kept; files that are in use are skipped.".into());
         }
-        Ok(make_preview(
+        let verb = if mode == DeleteMode::Recycle {
+            "Move to Recycle Bin:"
+        } else {
+            "Delete"
+        };
+        let mut p = make_preview(
             &CLEANUP_PATH,
-            format!(
-                "Delete {}",
-                t.path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default()
-            ),
+            format!("{verb} {}", file_label(&t.path)),
             format!("{} {}", fmt_bytes(t.size), t.reason),
             t.risk,
             vec![PreviewItem {
@@ -448,39 +582,155 @@ impl Action for CleanupPath {
                 detail: Some(format!("{:?}", t.kind)),
                 bytes: Some(t.size),
             }],
-            Some(t.size),
+            // Nothing is freed until the bin is emptied, so no immediate benefit is promised.
+            (mode != DeleteMode::Recycle).then_some(t.size),
             warnings,
-        ))
+        );
+        p.reversible = mode == DeleteMode::Recycle;
+        p.reversibility = mode_reversibility(mode);
+        Ok(p)
     }
 
     fn execute(&self, params: &Value, ctx: &Ctx) -> Result<Outcome, ActionError> {
         let t = validate_cleanup(params, ctx)?;
-        if keeps_folder(t.kind) {
-            let r = clean_contents(&t.path, None, SystemTime::now());
-            let mut details = vec![format!("{} items removed", r.removed)];
-            if r.failed > 0 {
-                details.push(format!(
-                    "{} items skipped (in use or protected by Windows)",
-                    r.failed
-                ));
+        let mode = delete_mode(&t, params);
+        let context = json!({ "mode": format!("{mode:?}"), "sizeBefore": t.size });
+        match mode {
+            DeleteMode::Contents => {
+                let r = clean_contents(&t.path, None, SystemTime::now());
+                let mut details = vec![format!("{} items removed", r.removed)];
+                if r.failed > 0 {
+                    details.push(format!(
+                        "{} items skipped (in use or protected by Windows)",
+                        r.failed
+                    ));
+                }
+                let mut o = outcome(
+                    &CLEANUP_PATH,
+                    format!("Freed {}.", fmt_bytes(r.freed_bytes)),
+                    Some(r.freed_bytes),
+                    details,
+                    None,
+                );
+                o.reversibility = Reversibility::Irreversible;
+                o.context =
+                    Some(json!({ "mode": "Contents", "sizeBefore": t.size, "failed": r.failed }));
+                Ok(o)
             }
-            return Ok(outcome(
-                &CLEANUP_PATH,
-                format!("Freed {}.", fmt_bytes(r.freed_bytes)),
-                Some(r.freed_bytes),
-                details,
-                None,
-            ));
+            DeleteMode::Recycle => {
+                let receipt = ctx.trasher.trash(&t.path).map_err(|e| {
+                    ActionError::Failed(format!("Could not move to the Recycle Bin: {e}"))
+                })?;
+                if receipt.in_bin {
+                    let mut o = outcome(
+                        &CLEANUP_PATH,
+                        format!(
+                            "Moved {} ({}) to the Recycle Bin. The space is released when the bin is emptied.",
+                            file_label(&t.path),
+                            fmt_bytes(t.size)
+                        ),
+                        None,
+                        vec![],
+                        Some(json!({ "restore": t.path.to_string_lossy() })),
+                    );
+                    o.reversibility = Reversibility::Recoverable;
+                    o.context = Some(context);
+                    Ok(o)
+                } else {
+                    // Windows did not keep a copy: say so instead of promising a recovery.
+                    let mut o = outcome(
+                        &CLEANUP_PATH,
+                        format!(
+                            "Removed {} ({}). Windows did not keep a Recycle Bin copy, so this is permanent.",
+                            file_label(&t.path),
+                            fmt_bytes(t.size)
+                        ),
+                        Some(t.size),
+                        vec![],
+                        None,
+                    );
+                    o.reversibility = Reversibility::Irreversible;
+                    o.context = Some(context);
+                    Ok(o)
+                }
+            }
+            DeleteMode::Permanent { .. } => {
+                let freed = remove_path(&t.path)
+                    .map_err(|e| ActionError::Failed(format!("Could not delete: {e}")))?;
+                let mut o = outcome(
+                    &CLEANUP_PATH,
+                    format!("Deleted and freed {}.", fmt_bytes(freed)),
+                    Some(freed),
+                    vec![],
+                    None,
+                );
+                o.reversibility = Reversibility::Irreversible;
+                o.context = Some(context);
+                Ok(o)
+            }
         }
-        let freed = remove_path(&t.path)
-            .map_err(|e| ActionError::Failed(format!("Could not delete: {e}")))?;
-        Ok(outcome(
-            &CLEANUP_PATH,
-            format!("Deleted and freed {}.", fmt_bytes(freed)),
-            Some(freed),
-            vec![],
-            None,
-        ))
+    }
+
+    fn verify(&self, params: &Value, o: &Outcome, _ctx: &Ctx) -> Verification {
+        let Ok(raw) = str_param(params, "path") else {
+            return Verification::unverifiable("No path to check.");
+        };
+        let path = Path::new(raw);
+        let ctx_val = |k: &str| o.context.as_ref().and_then(|c| c.get(k));
+        if ctx_val("mode").and_then(Value::as_str) == Some("Contents") {
+            let before = ctx_val("sizeBefore").and_then(Value::as_u64).unwrap_or(0);
+            let now = tree_size(path);
+            return if now < before || before == 0 {
+                Verification::verified(format!(
+                    "The folder now holds {} (was {}).",
+                    fmt_bytes(now),
+                    fmt_bytes(before)
+                ))
+            } else {
+                Verification::not_confirmed(
+                    "The folder did not shrink (its files may all be in use).",
+                )
+            };
+        }
+        if path.exists() {
+            Verification::not_confirmed("The item is still at its original location.")
+        } else if o.reversibility == Reversibility::Recoverable {
+            Verification::verified(
+                "The item is gone from its location and was found in the Recycle Bin.",
+            )
+        } else {
+            Verification::verified("The item is gone from its location.")
+        }
+    }
+
+    fn measure_path(&self, params: &Value, _ctx: &Ctx) -> Option<PathBuf> {
+        str_param(params, "path").ok().map(PathBuf::from)
+    }
+
+    fn measure_note(&self) -> Option<&'static str> {
+        Some("Items moved to the Recycle Bin free no disk space until the bin is emptied.")
+    }
+
+    fn rollback(&self, o: &Outcome, ctx: &Ctx) -> Option<Result<String, ActionError>> {
+        let original = Path::new(o.rollback.as_ref()?.get("restore")?.as_str()?);
+        // Never restore into a place a cleanup could not have touched.
+        if has_traversal(original) || !is_drive_absolute(original) {
+            return Some(Err(ActionError::Refused(
+                "Not a valid restore location.".into(),
+            )));
+        }
+        if original.exists() {
+            return Some(Err(ActionError::Failed(
+                "Something already exists at the original location; restore was not attempted."
+                    .into(),
+            )));
+        }
+        Some(
+            ctx.trasher
+                .restore(original)
+                .map(|_| format!("Restored {} from the Recycle Bin.", original.display()))
+                .map_err(ActionError::Failed),
+        )
     }
 }
 
@@ -495,6 +745,7 @@ const CLEANUP_TEMP: ActionSpec = ActionSpec {
     estimated_benefit: "Frees old temporary files",
     automation_eligible: true,
     reversible: false,
+    reversibility: Reversibility::Irreversible,
 };
 
 const TEMP_MIN_AGE: Duration = Duration::from_secs(24 * 3600);
@@ -540,6 +791,33 @@ impl Action for CleanupTemp {
         ))
     }
 
+    fn verify(&self, _params: &Value, o: &Outcome, ctx: &Ctx) -> Verification {
+        let Ok(t) = temp_dir(ctx) else {
+            return Verification::unverifiable("The Temp folder could not be checked.");
+        };
+        let failed = o
+            .context
+            .as_ref()
+            .and_then(|c| c.get("failed"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        // Anything still eligible beyond the items Windows refused to delete means work was missed.
+        let left = plan_clean_contents(t, Some(TEMP_MIN_AGE), SystemTime::now()).removed;
+        if left <= failed {
+            Verification::verified(format!(
+                "No old temporary items remain except {left} that are in use."
+            ))
+        } else {
+            Verification::not_confirmed(format!(
+                "{left} old items are still there ({failed} were reported in use)."
+            ))
+        }
+    }
+
+    fn measure_path(&self, _params: &Value, ctx: &Ctx) -> Option<PathBuf> {
+        ctx.facts.temp_dir.clone()
+    }
+
     fn execute(&self, _params: &Value, ctx: &Ctx) -> Result<Outcome, ActionError> {
         let t = temp_dir(ctx)?;
         let r = clean_contents(t, Some(TEMP_MIN_AGE), SystemTime::now());
@@ -547,13 +825,15 @@ impl Action for CleanupTemp {
         if r.failed > 0 {
             details.push(format!("{} items skipped (in use)", r.failed));
         }
-        Ok(outcome(
+        let mut o = outcome(
             &CLEANUP_TEMP,
             format!("Freed {}.", fmt_bytes(r.freed_bytes)),
             Some(r.freed_bytes),
             details,
             None,
-        ))
+        );
+        o.context = Some(json!({ "failed": r.failed }));
+        Ok(o)
     }
 }
 

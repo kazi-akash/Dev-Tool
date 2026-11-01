@@ -3,13 +3,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::Value;
 
 use super::builtin;
 use super::model::{
+    ActionStatus, Measurement, Reversibility, Verification, VerifyState,
     Action, ActionError, ActionSpec, Confirmation, Ctx, Outcome, Preview, RiskLevel,
 };
 
@@ -29,9 +30,24 @@ pub struct ActionRecord {
     pub summary: String,
     pub freed_bytes: Option<u64>,
     pub rolled_back: bool,
+    /// DevPilot can undo this run with one click (rollback).
     pub reversible: bool,
+    /// What actually happened, not what the spec hoped for.
+    pub reversibility: Reversibility,
+    pub status: ActionStatus,
+    /// Result of the VERIFY step; `None` when the action failed before it.
+    pub verification: Option<Verification>,
+    /// Result of the MEASURE step: before/after RAM and disk.
+    pub measurement: Option<Measurement>,
     #[serde(skip)]
     outcome: Option<Outcome>,
+}
+
+/// Everything one execution produced.
+struct Run {
+    result: Result<Outcome, ActionError>,
+    verification: Option<Verification>,
+    measurement: Option<Measurement>,
 }
 
 type Sink = Box<dyn Fn(&ActionRecord) + Send + Sync>;
@@ -42,6 +58,10 @@ pub struct ActionEngine {
     next_id: AtomicU64,
     /// Called for every recorded action (used to persist history).
     sink: OnceLock<Sink>,
+    /// How long a failed verification is retried while the system settles (processes exit, containers stop).
+    settle: Duration,
+    /// Pause before the closing measurement so released memory shows up.
+    measure_delay: Duration,
 }
 
 impl Default for ActionEngine {
@@ -64,7 +84,17 @@ impl ActionEngine {
             log: Mutex::new(VecDeque::new()),
             next_id: AtomicU64::new(1),
             sink: OnceLock::new(),
+            settle: Duration::from_secs(3),
+            measure_delay: Duration::from_millis(600),
         }
+    }
+
+    /// Override the verify/measure timing (tests use zero so they do not sleep).
+    #[cfg(test)]
+    pub fn with_timing(mut self, settle: Duration, measure_delay: Duration) -> Self {
+        self.settle = settle;
+        self.measure_delay = measure_delay;
+        self
     }
 
     /// Register the persistence hook. Only the first call has an effect.
@@ -89,17 +119,65 @@ impl ActionEngine {
         self.get(id)?.preview(params, ctx)
     }
 
-    fn record(
-        &self,
-        spec: &ActionSpec,
-        risk: RiskLevel,
-        automated: bool,
-        result: &Result<Outcome, ActionError>,
-    ) -> u64 {
+    /// EXECUTE, then VERIFY (retrying while the system settles), then MEASURE.
+    fn run(&self, action: &dyn Action, params: &Value, ctx: &Ctx) -> Run {
+        let path = action.measure_path(params, ctx);
+        let before = ctx.probe.reading(path.as_deref());
+        let result = action.execute(params, ctx);
+        let Ok(outcome) = &result else {
+            return Run {
+                result,
+                verification: None,
+                measurement: None,
+            };
+        };
+        let started = Instant::now();
+        let verification = loop {
+            let v = action.verify(params, outcome, ctx);
+            // Only "not confirmed" is retried: it may just be slow (a process still exiting).
+            if v.state != VerifyState::NotConfirmed || started.elapsed() >= self.settle {
+                break v;
+            }
+            std::thread::sleep(Duration::from_millis(250).min(self.settle));
+        };
+        if !self.measure_delay.is_zero() {
+            std::thread::sleep(self.measure_delay);
+        }
+        let after = ctx.probe.reading(path.as_deref());
+        let measurement = Measurement::new(before, after, action.measure_note());
+        Run {
+            result,
+            verification: Some(verification),
+            measurement: Some(measurement),
+        }
+    }
+
+    fn record(&self, spec: &ActionSpec, risk: RiskLevel, automated: bool, run: Run) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (success, summary, freed, outcome) = match result {
-            Ok(o) => (true, o.summary.clone(), o.freed_bytes, Some(o.clone())),
-            Err(e) => (false, e.to_string(), None, None),
+        let (status, success, summary, freed, outcome, reversibility) = match &run.result {
+            Ok(o) => {
+                let status = match run.verification.as_ref().map(|v| v.state) {
+                    Some(VerifyState::Verified) => ActionStatus::Success,
+                    Some(VerifyState::NotConfirmed) => ActionStatus::NotEffective,
+                    _ => ActionStatus::Unverified,
+                };
+                (
+                    status,
+                    true,
+                    o.summary.clone(),
+                    o.freed_bytes,
+                    Some(o.clone()),
+                    o.reversibility,
+                )
+            }
+            Err(e) => (
+                ActionStatus::Failed,
+                false,
+                e.to_string(),
+                None,
+                None,
+                spec.reversibility,
+            ),
         };
         let rec = ActionRecord {
             id,
@@ -112,7 +190,12 @@ impl ActionEngine {
             summary,
             freed_bytes: freed,
             rolled_back: false,
-            reversible: spec.reversible,
+            // A rollback button is only honest when the spec has one and this run did not lose it.
+            reversible: spec.reversible && reversibility != Reversibility::Irreversible,
+            reversibility,
+            status,
+            verification: run.verification,
+            measurement: run.measurement,
             outcome,
         };
         if let Some(sink) = self.sink.get() {
@@ -148,9 +231,13 @@ impl ActionEngine {
             ));
         }
 
-        let result = action.execute(params, ctx);
-        let rec_id = self.record(action.spec(), preview.risk, false, &result);
-        result.map(|_| self.find(rec_id).expect("record was just inserted"))
+        let run = self.run(action, params, ctx);
+        let failure = run.result.as_ref().err().cloned();
+        let rec_id = self.record(action.spec(), preview.risk, false, run);
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self.find(rec_id).expect("record was just inserted")),
+        }
     }
 
     /// Safe automation: only actions flagged eligible, only at LOW risk or below, never confirmed
@@ -173,9 +260,13 @@ impl ActionEngine {
                 "Automation only runs LOW risk actions.".into(),
             ));
         }
-        let result = action.execute(params, ctx);
-        let rec_id = self.record(action.spec(), preview.risk, true, &result);
-        result.map(|_| self.find(rec_id).expect("record was just inserted"))
+        let run = self.run(action, params, ctx);
+        let failure = run.result.as_ref().err().cloned();
+        let rec_id = self.record(action.spec(), preview.risk, true, run);
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(self.find(rec_id).expect("record was just inserted")),
+        }
     }
 
     pub fn rollback(&self, record_id: u64, ctx: &Ctx) -> Result<String, ActionError> {
@@ -240,7 +331,11 @@ impl ActionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::model::{CommandRunner, Facts, ProcessKiller};
+
+    use crate::actions::model::{
+        CommandRunner, Facts, Probe, ProbeProcess, ProcessKiller, SystemReading, TrashReceipt,
+        Trasher,
+    };
     use crate::processes::model::{Category, sample};
     use crate::storage::safety::{EntryKind, Safety};
     use crate::storage::scanner::ScanEntry;
@@ -248,10 +343,14 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
+    const GIB: u64 = 1024 * 1024 * 1024;
+
     #[derive(Default)]
     struct FakeRunner {
         calls: Mutex<Vec<String>>,
         fail: bool,
+        /// `docker ps` keeps listing the container (the stop did not take effect).
+        still_running: bool,
     }
     impl CommandRunner for FakeRunner {
         fn run(&self, program: &str, args: &[&str]) -> Result<String, String> {
@@ -261,6 +360,12 @@ mod tests {
                 .push(format!("{program} {}", args.join(" ")));
             if self.fail {
                 Err("boom".into())
+            } else if args.first() == Some(&"ps") {
+                Ok(if self.still_running {
+                    "redis\n".into()
+                } else {
+                    String::new()
+                })
             } else {
                 Ok("ok".into())
             }
@@ -278,19 +383,76 @@ mod tests {
         }
     }
 
+    /// Probe with scripted readings and process list.
+    struct FakeProbe {
+        readings: Mutex<std::collections::VecDeque<SystemReading>>,
+        procs: Mutex<Option<Vec<ProbeProcess>>>,
+    }
+    impl Default for FakeProbe {
+        fn default() -> Self {
+            Self {
+                readings: Mutex::default(),
+                procs: Mutex::new(Some(vec![])),
+            }
+        }
+    }
+    impl Probe for FakeProbe {
+        fn reading(&self, _: Option<&Path>) -> SystemReading {
+            self.readings.lock().unwrap().pop_front().unwrap_or_default()
+        }
+        fn processes(&self) -> Option<Vec<ProbeProcess>> {
+            self.procs.lock().unwrap().clone()
+        }
+    }
+
+    /// Recycle Bin double: really removes the item so verification sees it gone.
+    struct FakeTrasher {
+        in_bin: bool,
+        trashed: Mutex<Vec<PathBuf>>,
+        restored: Mutex<Vec<PathBuf>>,
+    }
+    impl Default for FakeTrasher {
+        fn default() -> Self {
+            Self {
+                in_bin: true,
+                trashed: Mutex::default(),
+                restored: Mutex::default(),
+            }
+        }
+    }
+    impl Trasher for FakeTrasher {
+        fn trash(&self, p: &Path) -> Result<TrashReceipt, String> {
+            self.trashed.lock().unwrap().push(p.to_path_buf());
+            if p.is_dir() {
+                std::fs::remove_dir_all(p).map_err(|e| e.to_string())?;
+            } else {
+                std::fs::remove_file(p).map_err(|e| e.to_string())?;
+            }
+            Ok(TrashReceipt { in_bin: self.in_bin })
+        }
+        fn restore(&self, p: &Path) -> Result<(), String> {
+            self.restored.lock().unwrap().push(p.to_path_buf());
+            Ok(())
+        }
+    }
+
     struct Rig {
         engine: ActionEngine,
         runner: FakeRunner,
         killer: FakeKiller,
+        probe: FakeProbe,
+        trasher: FakeTrasher,
         facts: Facts,
     }
 
     impl Rig {
         fn new(facts: Facts) -> Self {
             Rig {
-                engine: ActionEngine::default(),
+                engine: ActionEngine::default().with_timing(Duration::ZERO, Duration::ZERO),
                 runner: FakeRunner::default(),
                 killer: FakeKiller::default(),
+                probe: FakeProbe::default(),
+                trasher: FakeTrasher::default(),
                 facts,
             }
         }
@@ -299,6 +461,8 @@ mod tests {
                 facts: &self.facts,
                 runner: &self.runner,
                 killer: &self.killer,
+                probe: &self.probe,
+                trasher: &self.trasher,
             }
         }
         fn exec(&self, id: &str, p: Value, c: bool, d: bool) -> Result<ActionRecord, ActionError> {
@@ -416,7 +580,9 @@ mod tests {
             )
             .unwrap();
         assert!(rec.success && rec.reversible);
-        assert_eq!(rig.calls(), vec!["docker stop redis"]);
+        assert_eq!(rig.calls()[0], "docker stop redis");
+        assert_eq!(rec.status, ActionStatus::Success, "the stop was verified");
+        assert_eq!(rec.reversibility, Reversibility::Reversible);
     }
 
     #[test]
@@ -521,7 +687,9 @@ mod tests {
             .unwrap();
         let msg = rig.engine.rollback(rec.id, &rig.ctx()).unwrap();
         assert!(msg.contains("Started container redis"));
-        assert_eq!(rig.calls(), vec!["docker stop redis", "docker start redis"]);
+        let calls = rig.calls();
+        assert_eq!(calls.first().unwrap(), "docker stop redis");
+        assert_eq!(calls.last().unwrap(), "docker start redis");
         assert!(rig.engine.history()[0].rolled_back);
         assert!(
             rig.engine.rollback(rec.id, &rig.ctx()).is_err(),
@@ -664,28 +832,26 @@ mod tests {
     }
 
     #[test]
-    fn node_modules_is_destructive_and_needs_two_confirmations() {
+    fn node_modules_goes_to_the_recycle_bin_by_default_and_needs_two_confirmations() {
         let t = tempfile::tempdir().unwrap();
         let nm = t.path().join("proj").join("node_modules");
         write(&nm.join("pkg").join("index.js"), 100);
         // The entry lies about its safety (SAFE_TO_CLEAN); the engine uses the kind.
         let rig = Rig::new(facts_with(vec![entry(&nm, EntryKind::NodeModules)]));
-
-        let p = rig
-            .engine
-            .preview(
-                "cleanup.path",
-                &json!({ "path": nm.to_string_lossy() }),
-                &rig.ctx(),
-            )
-            .unwrap();
-        assert_eq!(p.risk, RiskLevel::Destructive);
-        assert!(p.requires_confirmation && p.requires_double_confirmation && !p.reversible);
-        assert_eq!(p.estimated_benefit_bytes, Some(100));
-        assert!(p.warnings.iter().any(|w| w.contains("exists nowhere else")));
-        assert!(p.warnings.iter().any(|w| w.contains("Recycle Bin")));
-
         let args = json!({ "path": nm.to_string_lossy() });
+
+        let p = rig.engine.preview("cleanup.path", &args, &rig.ctx()).unwrap();
+        assert_eq!(p.risk, RiskLevel::Destructive);
+        assert!(p.requires_confirmation && p.requires_double_confirmation);
+        assert_eq!(p.reversibility, Reversibility::Recoverable);
+        assert!(p.reversible, "restore from the Recycle Bin is offered");
+        assert_eq!(
+            p.estimated_benefit_bytes, None,
+            "no space is freed until the bin is emptied, so none is promised"
+        );
+        assert!(p.warnings.iter().any(|w| w.contains("exists nowhere else")));
+        assert!(p.warnings.iter().any(|w| w.contains("emptied")));
+
         assert!(matches!(
             rig.exec("cleanup.path", args.clone(), false, false),
             Err(ActionError::ConfirmationRequired(_))
@@ -695,9 +861,214 @@ mod tests {
             Err(ActionError::ConfirmationRequired(_))
         ));
         assert!(nm.exists(), "still there after incomplete confirmations");
+
+        let rec = rig.exec("cleanup.path", args, true, true).unwrap();
+        assert!(!nm.exists());
+        assert_eq!(rig.trasher.trashed.lock().unwrap().len(), 1);
+        assert_eq!(rec.freed_bytes, None, "moving to the bin frees nothing yet");
+        assert_eq!(rec.reversibility, Reversibility::Recoverable);
+        assert_eq!(rec.status, ActionStatus::Success);
+        assert!(rec.reversible);
+    }
+
+    #[test]
+    fn recycle_bin_move_can_be_rolled_back_once() {
+        let t = tempfile::tempdir().unwrap();
+        let nm = t.path().join("proj").join("node_modules");
+        write(&nm.join("pkg").join("index.js"), 100);
+        let rig = Rig::new(facts_with(vec![entry(&nm, EntryKind::NodeModules)]));
+        let rec = rig
+            .exec("cleanup.path", json!({ "path": nm.to_string_lossy() }), true, true)
+            .unwrap();
+        let msg = rig.engine.rollback(rec.id, &rig.ctx()).unwrap();
+        assert!(msg.contains("Restored"));
+        assert_eq!(rig.trasher.restored.lock().unwrap().len(), 1);
+        assert!(rig.engine.rollback(rec.id, &rig.ctx()).is_err(), "only once");
+    }
+
+    #[test]
+    fn if_windows_keeps_no_bin_copy_the_record_says_irreversible_and_offers_no_undo() {
+        let t = tempfile::tempdir().unwrap();
+        let nm = t.path().join("proj").join("node_modules");
+        write(&nm.join("pkg").join("index.js"), 100);
+        let mut rig = Rig::new(facts_with(vec![entry(&nm, EntryKind::NodeModules)]));
+        rig.trasher.in_bin = false;
+        let rec = rig
+            .exec("cleanup.path", json!({ "path": nm.to_string_lossy() }), true, true)
+            .unwrap();
+        assert_eq!(rec.reversibility, Reversibility::Irreversible);
+        assert!(!rec.reversible, "no rollback is claimed when no copy exists");
+        assert!(rec.summary.contains("permanent"));
+        assert_eq!(rec.freed_bytes, Some(100));
+        assert!(rig.engine.rollback(rec.id, &rig.ctx()).is_err());
+    }
+
+    #[test]
+    fn permanent_request_deletes_and_is_irreversible() {
+        let t = tempfile::tempdir().unwrap();
+        let nm = t.path().join("proj").join("node_modules");
+        write(&nm.join("pkg").join("index.js"), 100);
+        let rig = Rig::new(facts_with(vec![entry(&nm, EntryKind::NodeModules)]));
+        let args = json!({ "path": nm.to_string_lossy(), "permanent": true });
+        let p = rig.engine.preview("cleanup.path", &args, &rig.ctx()).unwrap();
+        assert_eq!(p.reversibility, Reversibility::Irreversible);
+        assert!(!p.reversible);
+        assert_eq!(p.estimated_benefit_bytes, Some(100));
+        assert!(p.warnings.iter().any(|w| w.contains("not moved to the Recycle Bin")));
         let rec = rig.exec("cleanup.path", args, true, true).unwrap();
         assert_eq!(rec.freed_bytes, Some(100));
         assert!(!nm.exists());
+        assert!(rig.trasher.trashed.lock().unwrap().is_empty(), "the bin was bypassed on request");
+        assert_eq!(rec.reversibility, Reversibility::Irreversible);
+    }
+
+    #[test]
+    fn measurement_reports_before_after_and_a_system_wide_caveat() {
+        let rig = Rig::new(Facts::default());
+        {
+            let mut q = rig.probe.readings.lock().unwrap();
+            q.push_back(SystemReading {
+                ram_used_bytes: Some(15 * GIB),
+                ram_available_bytes: Some(GIB),
+                disk_free_bytes: None,
+            });
+            q.push_back(SystemReading {
+                ram_used_bytes: Some(13 * GIB),
+                ram_available_bytes: Some(3 * GIB),
+                disk_free_bytes: None,
+            });
+        }
+        let rec = rig
+            .exec("docker.stop_container", json!({ "container": "redis" }), false, false)
+            .unwrap();
+        let m = rec.measurement.as_ref().unwrap();
+        assert_eq!(m.ram_recovered_bytes, Some(2 * GIB as i64));
+        assert_eq!(m.before.ram_used_bytes, Some(15 * GIB));
+        assert!(m.note.contains("system-wide"));
+        assert!(m.note.contains("keeps memory"), "docker caveat present: {}", m.note);
+    }
+
+    #[test]
+    fn memory_that_grew_is_reported_as_negative_not_clamped() {
+        let rig = Rig::new(Facts::default());
+        {
+            let mut q = rig.probe.readings.lock().unwrap();
+            q.push_back(SystemReading {
+                ram_available_bytes: Some(3 * GIB),
+                ..Default::default()
+            });
+            q.push_back(SystemReading {
+                ram_available_bytes: Some(2 * GIB),
+                ..Default::default()
+            });
+        }
+        let rec = rig
+            .exec("docker.stop_container", json!({ "container": "redis" }), false, false)
+            .unwrap();
+        assert_eq!(rec.measurement.unwrap().ram_recovered_bytes, Some(-(GIB as i64)));
+    }
+
+    #[test]
+    fn unreadable_system_state_gives_unknown_not_zero() {
+        let rig = Rig::new(Facts::default());
+        let rec = rig
+            .exec("docker.stop_container", json!({ "container": "redis" }), false, false)
+            .unwrap();
+        let m = rec.measurement.unwrap();
+        assert_eq!(m.ram_recovered_bytes, None);
+        assert_eq!(m.disk_recovered_bytes, None);
+    }
+
+    #[test]
+    fn terminate_is_verified_by_the_pid_being_gone_and_is_irreversible() {
+        let procs = vec![sample(77, "node.exe", GIB, 1.0, Category::Node)];
+        let rig = Rig::new(Facts {
+            processes: procs,
+            ..Default::default()
+        });
+        let rec = rig
+            .exec("process.terminate", json!({ "pid": 77, "name": "node.exe" }), true, false)
+            .unwrap();
+        assert_eq!(rec.status, ActionStatus::Success);
+        assert_eq!(rec.reversibility, Reversibility::Irreversible);
+        assert!(!rec.reversible);
+        assert!(rec.verification.unwrap().detail.contains("no longer running"));
+    }
+
+    #[test]
+    fn a_process_that_survives_is_not_effective_not_success() {
+        let procs = vec![sample(77, "node.exe", GIB, 1.0, Category::Node)];
+        let rig = Rig::new(Facts {
+            processes: procs,
+            ..Default::default()
+        });
+        *rig.probe.procs.lock().unwrap() = Some(vec![ProbeProcess {
+            pid: 77,
+            name: "node.exe".into(),
+            cmd: String::new(),
+        }]);
+        let rec = rig
+            .exec("process.terminate", json!({ "pid": 77, "name": "node.exe" }), true, false)
+            .unwrap();
+        assert!(rec.success, "the call itself did not fail");
+        assert_eq!(rec.status, ActionStatus::NotEffective);
+        assert_eq!(rec.verification.unwrap().state, VerifyState::NotConfirmed);
+    }
+
+    #[test]
+    fn unreadable_process_list_means_unverified() {
+        let procs = vec![sample(77, "node.exe", GIB, 1.0, Category::Node)];
+        let rig = Rig::new(Facts {
+            processes: procs,
+            ..Default::default()
+        });
+        *rig.probe.procs.lock().unwrap() = None;
+        let rec = rig
+            .exec("process.terminate", json!({ "pid": 77, "name": "node.exe" }), true, false)
+            .unwrap();
+        assert_eq!(rec.status, ActionStatus::Unverified);
+    }
+
+    #[test]
+    fn wsl_shutdown_is_verified_by_vmmem_exit_and_gradle_stop_by_daemons_gone() {
+        let rig = Rig::new(Facts::default());
+        let rec = rig.exec("wsl.shutdown", json!({}), true, false).unwrap();
+        assert_eq!(rec.status, ActionStatus::Success);
+        assert_eq!(rec.reversibility, Reversibility::Irreversible);
+
+        *rig.probe.procs.lock().unwrap() = Some(vec![ProbeProcess {
+            pid: 9,
+            name: "java.exe".into(),
+            cmd: "java org.gradle.launcher.daemon.bootstrap.gradledaemon 8.5".into(),
+        }]);
+        let rec = rig.exec("gradle.stop", json!({}), false, false).unwrap();
+        assert_eq!(rec.status, ActionStatus::NotEffective);
+        assert!(rec.verification.unwrap().detail.contains("same Gradle version"));
+        assert_eq!(rec.reversibility, Reversibility::Recoverable);
+    }
+
+#[test]    fn a_container_that_keeps_running_is_not_effective() {        let mut rig = Rig::new(Facts::default());        rig.runner.still_running = true;        let rec = rig            .exec("docker.stop_container", json!({ "container": "redis" }), false, false)            .unwrap();        assert!(rec.success);        assert_eq!(rec.status, ActionStatus::NotEffective);        assert!(rec.verification.unwrap().detail.contains("still shows as running"));    }
+    #[test]
+    fn a_failed_action_has_no_verification_or_measurement() {
+        let mut rig = Rig::new(Facts::default());
+        rig.runner.fail = true;
+        let r = rig.exec("docker.stop_container", json!({ "container": "redis" }), false, false);
+        assert!(r.is_err());
+        let rec = &rig.engine.history()[0];
+        assert_eq!(rec.status, ActionStatus::Failed);
+        assert!(rec.verification.is_none() && rec.measurement.is_none());
+    }
+
+    #[test]
+    fn no_irreversible_spec_claims_rollback_and_classes_are_consistent() {
+        for s in ActionEngine::default().list() {
+            if s.reversibility == Reversibility::Irreversible {
+                assert!(!s.reversible, "{} is irreversible but offers rollback", s.id);
+            }
+            if s.reversibility == Reversibility::Reversible {
+                assert!(s.reversible, "{} claims REVERSIBLE without a rollback", s.id);
+            }
+        }
     }
 
     #[test]

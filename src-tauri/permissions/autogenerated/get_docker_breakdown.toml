@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-docker-breakdown"
+description = "Enables the get_docker_breakdown command without any pre-configured scope."
+commands.allow = ["get_docker_breakdown"]
+
+[[permission]]
+identifier = "deny-get-docker-breakdown"
+description = "Denies the get_docker_breakdown command without any pre-configured scope."
+commands.deny = ["get_docker_breakdown"]

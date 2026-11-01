@@ -38,6 +38,8 @@ export interface DockerContainer {
   running: boolean;
   memoryBytes: number | null;
   cpuPercent: number | null;
+  /** Explicit --memory limit; null when none was set. */
+  memoryLimitBytes: number | null;
 }
 
 export interface DockerStatus {
@@ -170,6 +172,29 @@ export interface ScanStatus {
 
 // --- actions -------------------------------------------------------------------------------------
 export type RiskLevel = "SAFE" | "LOW" | "MEDIUM" | "HIGH" | "DESTRUCTIVE";
+/** REVERSIBLE: one-click undo. RECOVERABLE: no undo button, but you can get it back (Recycle Bin, restarts). IRREVERSIBLE: permanent. */
+export type Reversibility = "REVERSIBLE" | "RECOVERABLE" | "IRREVERSIBLE";
+export type ActionStatus = "SUCCESS" | "UNVERIFIED" | "NOT_EFFECTIVE" | "FAILED";
+
+export interface ActionVerification {
+  state: "VERIFIED" | "NOT_CONFIRMED" | "UNVERIFIABLE";
+  detail: string;
+}
+
+export interface SystemReading {
+  ramUsedBytes: number | null;
+  ramAvailableBytes: number | null;
+  diskFreeBytes: number | null;
+}
+
+export interface ActionMeasurement {
+  before: SystemReading;
+  after: SystemReading;
+  /** Change in available RAM; negative when use grew. null = not measurable. */
+  ramRecoveredBytes: number | null;
+  diskRecoveredBytes: number | null;
+  note: string;
+}
 
 export interface ActionSpec {
   id: string;
@@ -178,7 +203,9 @@ export interface ActionSpec {
   riskLevel: RiskLevel;
   estimatedBenefit: string;
   automationEligible: boolean;
+  /** DevPilot offers a one-click undo. */
   reversible: boolean;
+  reversibility: Reversibility;
 }
 
 export interface PreviewItem {
@@ -198,6 +225,8 @@ export interface ActionPreview {
   requiresConfirmation: boolean;
   requiresDoubleConfirmation: boolean;
   reversible: boolean;
+  /** What happens if you change your mind about this run. */
+  reversibility: Reversibility;
 }
 
 export interface ActionRecord {
@@ -212,6 +241,10 @@ export interface ActionRecord {
   freedBytes: number | null;
   rolledBack: boolean;
   reversible: boolean;
+  reversibility: Reversibility;
+  status: ActionStatus;
+  verification: ActionVerification | null;
+  measurement: ActionMeasurement | null;
 }
 
 /** Errors from the action engine and AI gateway arrive as `{ code, message }`. */
@@ -261,6 +294,10 @@ export interface StoredAction {
   success: boolean;
   summary: string;
   freedBytes: number | null;
+  reversibility: Reversibility | "UNKNOWN";
+  status: ActionStatus | "UNKNOWN";
+  ramRecoveredBytes: number | null;
+  diskRecoveredBytes: number | null;
 }
 
 // --- AI ------------------------------------------------------------------------------------------
@@ -339,4 +376,17 @@ export interface BuildSession {
   dockerChangeBytes: number;
   result: string;
   correlation: SessionCorrelation | null;
+}
+
+// --- Docker/WSL2 attribution ---------------------------------------------------------------------
+export interface DockerBreakdown {
+  /** Memory Windows charges to Docker/WSL2 processes. Container figures are inside this, never added to it. */
+  hostTotalBytes: number;
+  wslVmBytes: number | null;
+  desktopBackendBytes: number;
+  containers: DockerContainer[];
+  containersReportedBytes: number | null;
+  unattributedVmBytes: number | null;
+  level: "ATTRIBUTED" | "PARTIAL" | "UNAVAILABLE";
+  notes: string[];
 }

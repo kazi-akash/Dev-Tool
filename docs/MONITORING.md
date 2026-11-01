@@ -158,3 +158,9 @@ Correlation with incidents is computed when listing, never stored:
 Timing alone never produces STRONG, and the wording never says the build "caused" an incident. Active session names are stored in each incident sample. IPC: `get_build_sessions(limit)`.
 
 Limits: command lines are redacted and capped at 300 characters, so a `build` argument beyond that is not seen.
+
+## Docker/WSL2 attribution (`docker/attribution.rs`)
+
+Two measurements are kept apart and **never added**: *host memory* (what Windows charges to `vmmem`/`vmmemWSL` and the Docker Desktop processes; this is what reduces free RAM) and *container-reported memory* (`docker stats`, inside the VM, excluding page cache the VM still holds, sampled at a different moment).
+
+`get_docker_breakdown` returns host total, WSL2 VM, Desktop/backend, running containers (largest first; name, status, image, CPU, memory, explicit `--memory` limit from `docker inspect`, `null` when none was set), container-reported total and the VM remainder. The remainder is only computed when every running container reported memory and the total does not exceed the VM; otherwise the level is `PARTIAL` and a note says why. Docker missing or stopped gives `UNAVAILABLE`: host memory only, no per-container split. Unknown values are `null`, shown as "memory unavailable", never as 0.

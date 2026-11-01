@@ -151,6 +151,8 @@ fn ctx<'a>(facts: &'a Facts) -> Ctx<'a> {
         facts,
         runner: &NoRunner,
         killer: &NoKiller,
+        probe: &crate::actions::model::NullProbe,
+        trasher: &crate::actions::model::NullTrasher,
     }
 }
 
@@ -288,7 +290,7 @@ fn destructive_cleanup_of_node_modules_needs_both_confirmations_end_to_end() {
     };
     let engine = ActionEngine::default();
     let nm = m.project.join("node_modules");
-    let params = json!({ "path": nm.to_string_lossy() });
+    let params = json!({ "path": nm.to_string_lossy(), "permanent": true });
 
     for c in [
         Confirmation::default(),

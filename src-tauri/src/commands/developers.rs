@@ -23,3 +23,19 @@ pub async fn get_docker_status(
         .await
         .map_err(|e| e.to_string())
 }
+
+/// Docker/WSL2 memory split: host memory, VM, containers and what cannot be attributed.
+/// `None` when no Docker/WSL2 processes are running.
+#[tauri::command]
+pub async fn get_docker_breakdown(
+    state: State<'_, Arc<MonitorState>>,
+    docker: State<'_, Arc<DockerMonitor>>,
+) -> Result<Option<crate::docker::attribution::DockerBreakdown>, String> {
+    let (state, docker) = (state.inner().clone(), docker.inner().clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        let workloads = detect_workloads(&state.processes.snapshot());
+        crate::docker::attribution::breakdown(&workloads, &docker.status(false))
+    })
+    .await
+    .map_err(|e| e.to_string())
+}

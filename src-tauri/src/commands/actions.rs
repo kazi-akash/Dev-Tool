@@ -6,7 +6,7 @@ use tauri::State;
 use crate::actions::automation::ActionsState;
 use crate::actions::engine::ActionRecord;
 use crate::actions::model::{ActionError, ActionSpec, Confirmation, Ctx, Facts, Preview};
-use crate::actions::real::{RealKiller, RealRunner};
+use crate::actions::real::{RealKiller, RealProbe, RealRunner, RealTrasher};
 use crate::monitoring::service::MonitorState;
 use crate::storage::state::StorageState;
 
@@ -47,6 +47,8 @@ pub async fn preview_action(
             facts: &facts,
             runner: &RealRunner,
             killer: &RealKiller,
+            probe: &RealProbe,
+            trasher: &RealTrasher,
         };
         actions.engine.preview(&action_id, &params, &ctx)
     })
@@ -75,6 +77,8 @@ pub async fn execute_action(
             facts: &facts,
             runner: &RealRunner,
             killer: &RealKiller,
+            probe: &RealProbe,
+            trasher: &RealTrasher,
         };
         actions.engine.execute(
             &action_id,
@@ -108,6 +112,8 @@ pub async fn rollback_action(
             facts: &facts,
             runner: &RealRunner,
             killer: &RealKiller,
+            probe: &RealProbe,
+            trasher: &RealTrasher,
         };
         actions.engine.rollback(record_id, &ctx)
     })
