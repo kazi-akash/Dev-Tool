@@ -111,7 +111,7 @@ describe("docker attribution", () => {
       wslVmBytes: 4.4 * GB,
       desktopBackendBytes: 1.4 * GB,
       containers: [
-        { id: "a", name: "nidustime-api", image: "api:1", status: "Up", running: true, memoryBytes: 1.4 * GB, cpuPercent: 1, memoryLimitBytes: 2 * GB },
+        { id: "a", name: "shop-api", image: "api:1", status: "Up", running: true, memoryBytes: 1.4 * GB, cpuPercent: 1, memoryLimitBytes: 2 * GB },
         { id: "b", name: "odd", image: "x", status: "Up", running: true, memoryBytes: null, cpuPercent: null, memoryLimitBytes: null },
       ],
       containersReportedBytes: 1.4 * GB,

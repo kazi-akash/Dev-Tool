@@ -2,6 +2,13 @@
   "name": "devpilot",
   "private": true,
   "version": "0.1.0",
+  "author": {
+    "name": "Kazi Sajedul Islam",
+    "email": "quaziakash@gmail.com",
+    "url": "https://github.com/kazi-akash"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/kazi-akash/Dev-Tool",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -2,7 +2,10 @@
 name = "devpilot"
 version = "0.1.0"
 description = "Windows developer-system health assistant"
-authors = ["Nidus Lab"]
+authors = ["Kazi Sajedul Islam <quaziakash@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/kazi-akash/Dev-Tool"
+homepage = "https://github.com/kazi-akash"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

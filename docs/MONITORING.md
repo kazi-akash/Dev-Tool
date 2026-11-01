@@ -92,7 +92,7 @@ On demand and cached for 10 s: `docker ps` and `docker stats --no-stream` with a
 
 Roll-ups run every minute, only on whole buckets, in one transaction per step, and are idempotent. Averages are weighted by sample count, maxima are kept, and per-drive and top-workload detail comes from the peak-RAM sample. A query picks the resolution from the range (about 100-400 points). Diagnoses (deduplicated: same rule/severity within 30 minutes is not re-recorded) and actions are stored for 90 days.
 
-File: `%APPDATA%\com.niduslab.devpilot\devpilot.db`. If it cannot be opened, history is off and everything else runs.
+File: `%APPDATA%\io.github.kazi-akash.devpilot\devpilot.db`. If it cannot be opened, history is off and everything else runs.
 
 ## Measured (Windows 11, 14 logical cores; release build unless noted)
 

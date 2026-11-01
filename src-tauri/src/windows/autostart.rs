@@ -212,7 +212,7 @@ mod tests {
         use winreg::RegKey;
         use winreg::enums::HKEY_CURRENT_USER;
         let subkey = format!(
-            "Software\\NidusLabTest\\DevPilotAutostart{}",
+            "Software\\DevPilotTest\\DevPilotAutostart{}",
             std::process::id()
         );
         let exe = PathBuf::from("C:\\Test\\devpilot.exe");
@@ -236,7 +236,7 @@ mod tests {
         a.set_enabled(false).unwrap();
         assert!(!a.status().enabled);
         a.set_enabled(false).unwrap(); // already off is fine
-        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all("Software\\NidusLabTest");
+        let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all("Software\\DevPilotTest");
     }
 
     #[test]

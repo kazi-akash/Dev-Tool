@@ -74,6 +74,16 @@ Current counts: see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#tests). Vitest use
 - Memory-growth detection reports a *possible* leak with confidence; caches and builds also grow.
 - The installer is unsigned.
 
+## Author
+
+**Kazi Sajedul Islam** — creator and maintainer.
+
+- Email: [quaziakash@gmail.com](mailto:quaziakash@gmail.com)
+- GitHub: [kazi-akash](https://github.com/kazi-akash)
+- LinkedIn: [kazi-akash](https://www.linkedin.com/in/kazi-akash/)
+
+DevPilot is an independent personal project. It is not a product of any company.
+
 ## License
 
-Not yet specified.
+[MIT](LICENSE) © 2026 Kazi Sajedul Islam.
