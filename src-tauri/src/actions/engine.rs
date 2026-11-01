@@ -10,8 +10,8 @@ use serde_json::Value;
 
 use super::builtin;
 use super::model::{
-    ActionStatus, Measurement, Reversibility, Verification, VerifyState,
-    Action, ActionError, ActionSpec, Confirmation, Ctx, Outcome, Preview, RiskLevel,
+    Action, ActionError, ActionSpec, ActionStatus, Confirmation, Ctx, Measurement, Outcome,
+    Preview, Reversibility, RiskLevel, Verification, VerifyState,
 };
 
 const HISTORY_LIMIT: usize = 200;
@@ -398,7 +398,11 @@ mod tests {
     }
     impl Probe for FakeProbe {
         fn reading(&self, _: Option<&Path>) -> SystemReading {
-            self.readings.lock().unwrap().pop_front().unwrap_or_default()
+            self.readings
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_default()
         }
         fn processes(&self) -> Option<Vec<ProbeProcess>> {
             self.procs.lock().unwrap().clone()
@@ -428,7 +432,9 @@ mod tests {
             } else {
                 std::fs::remove_file(p).map_err(|e| e.to_string())?;
             }
-            Ok(TrashReceipt { in_bin: self.in_bin })
+            Ok(TrashReceipt {
+                in_bin: self.in_bin,
+            })
         }
         fn restore(&self, p: &Path) -> Result<(), String> {
             self.restored.lock().unwrap().push(p.to_path_buf());
@@ -840,7 +846,10 @@ mod tests {
         let rig = Rig::new(facts_with(vec![entry(&nm, EntryKind::NodeModules)]));
         let args = json!({ "path": nm.to_string_lossy() });
 
-        let p = rig.engine.preview("cleanup.path", &args, &rig.ctx()).unwrap();
+        let p = rig
+            .engine
+            .preview("cleanup.path", &args, &rig.ctx())
+            .unwrap();
         assert_eq!(p.risk, RiskLevel::Destructive);
         assert!(p.requires_confirmation && p.requires_double_confirmation);
         assert_eq!(p.reversibility, Reversibility::Recoverable);
@@ -878,12 +887,20 @@ mod tests {
         write(&nm.join("pkg").join("index.js"), 100);
         let rig = Rig::new(facts_with(vec![entry(&nm, EntryKind::NodeModules)]));
         let rec = rig
-            .exec("cleanup.path", json!({ "path": nm.to_string_lossy() }), true, true)
+            .exec(
+                "cleanup.path",
+                json!({ "path": nm.to_string_lossy() }),
+                true,
+                true,
+            )
             .unwrap();
         let msg = rig.engine.rollback(rec.id, &rig.ctx()).unwrap();
         assert!(msg.contains("Restored"));
         assert_eq!(rig.trasher.restored.lock().unwrap().len(), 1);
-        assert!(rig.engine.rollback(rec.id, &rig.ctx()).is_err(), "only once");
+        assert!(
+            rig.engine.rollback(rec.id, &rig.ctx()).is_err(),
+            "only once"
+        );
     }
 
     #[test]
@@ -894,10 +911,18 @@ mod tests {
         let mut rig = Rig::new(facts_with(vec![entry(&nm, EntryKind::NodeModules)]));
         rig.trasher.in_bin = false;
         let rec = rig
-            .exec("cleanup.path", json!({ "path": nm.to_string_lossy() }), true, true)
+            .exec(
+                "cleanup.path",
+                json!({ "path": nm.to_string_lossy() }),
+                true,
+                true,
+            )
             .unwrap();
         assert_eq!(rec.reversibility, Reversibility::Irreversible);
-        assert!(!rec.reversible, "no rollback is claimed when no copy exists");
+        assert!(
+            !rec.reversible,
+            "no rollback is claimed when no copy exists"
+        );
         assert!(rec.summary.contains("permanent"));
         assert_eq!(rec.freed_bytes, Some(100));
         assert!(rig.engine.rollback(rec.id, &rig.ctx()).is_err());
@@ -910,15 +935,25 @@ mod tests {
         write(&nm.join("pkg").join("index.js"), 100);
         let rig = Rig::new(facts_with(vec![entry(&nm, EntryKind::NodeModules)]));
         let args = json!({ "path": nm.to_string_lossy(), "permanent": true });
-        let p = rig.engine.preview("cleanup.path", &args, &rig.ctx()).unwrap();
+        let p = rig
+            .engine
+            .preview("cleanup.path", &args, &rig.ctx())
+            .unwrap();
         assert_eq!(p.reversibility, Reversibility::Irreversible);
         assert!(!p.reversible);
         assert_eq!(p.estimated_benefit_bytes, Some(100));
-        assert!(p.warnings.iter().any(|w| w.contains("not moved to the Recycle Bin")));
+        assert!(
+            p.warnings
+                .iter()
+                .any(|w| w.contains("not moved to the Recycle Bin"))
+        );
         let rec = rig.exec("cleanup.path", args, true, true).unwrap();
         assert_eq!(rec.freed_bytes, Some(100));
         assert!(!nm.exists());
-        assert!(rig.trasher.trashed.lock().unwrap().is_empty(), "the bin was bypassed on request");
+        assert!(
+            rig.trasher.trashed.lock().unwrap().is_empty(),
+            "the bin was bypassed on request"
+        );
         assert_eq!(rec.reversibility, Reversibility::Irreversible);
     }
 
@@ -939,13 +974,22 @@ mod tests {
             });
         }
         let rec = rig
-            .exec("docker.stop_container", json!({ "container": "redis" }), false, false)
+            .exec(
+                "docker.stop_container",
+                json!({ "container": "redis" }),
+                false,
+                false,
+            )
             .unwrap();
         let m = rec.measurement.as_ref().unwrap();
         assert_eq!(m.ram_recovered_bytes, Some(2 * GIB as i64));
         assert_eq!(m.before.ram_used_bytes, Some(15 * GIB));
         assert!(m.note.contains("system-wide"));
-        assert!(m.note.contains("keeps memory"), "docker caveat present: {}", m.note);
+        assert!(
+            m.note.contains("keeps memory"),
+            "docker caveat present: {}",
+            m.note
+        );
     }
 
     #[test]
@@ -963,16 +1007,29 @@ mod tests {
             });
         }
         let rec = rig
-            .exec("docker.stop_container", json!({ "container": "redis" }), false, false)
+            .exec(
+                "docker.stop_container",
+                json!({ "container": "redis" }),
+                false,
+                false,
+            )
             .unwrap();
-        assert_eq!(rec.measurement.unwrap().ram_recovered_bytes, Some(-(GIB as i64)));
+        assert_eq!(
+            rec.measurement.unwrap().ram_recovered_bytes,
+            Some(-(GIB as i64))
+        );
     }
 
     #[test]
     fn unreadable_system_state_gives_unknown_not_zero() {
         let rig = Rig::new(Facts::default());
         let rec = rig
-            .exec("docker.stop_container", json!({ "container": "redis" }), false, false)
+            .exec(
+                "docker.stop_container",
+                json!({ "container": "redis" }),
+                false,
+                false,
+            )
             .unwrap();
         let m = rec.measurement.unwrap();
         assert_eq!(m.ram_recovered_bytes, None);
@@ -987,12 +1044,22 @@ mod tests {
             ..Default::default()
         });
         let rec = rig
-            .exec("process.terminate", json!({ "pid": 77, "name": "node.exe" }), true, false)
+            .exec(
+                "process.terminate",
+                json!({ "pid": 77, "name": "node.exe" }),
+                true,
+                false,
+            )
             .unwrap();
         assert_eq!(rec.status, ActionStatus::Success);
         assert_eq!(rec.reversibility, Reversibility::Irreversible);
         assert!(!rec.reversible);
-        assert!(rec.verification.unwrap().detail.contains("no longer running"));
+        assert!(
+            rec.verification
+                .unwrap()
+                .detail
+                .contains("no longer running")
+        );
     }
 
     #[test]
@@ -1008,7 +1075,12 @@ mod tests {
             cmd: String::new(),
         }]);
         let rec = rig
-            .exec("process.terminate", json!({ "pid": 77, "name": "node.exe" }), true, false)
+            .exec(
+                "process.terminate",
+                json!({ "pid": 77, "name": "node.exe" }),
+                true,
+                false,
+            )
             .unwrap();
         assert!(rec.success, "the call itself did not fail");
         assert_eq!(rec.status, ActionStatus::NotEffective);
@@ -1024,7 +1096,12 @@ mod tests {
         });
         *rig.probe.procs.lock().unwrap() = None;
         let rec = rig
-            .exec("process.terminate", json!({ "pid": 77, "name": "node.exe" }), true, false)
+            .exec(
+                "process.terminate",
+                json!({ "pid": 77, "name": "node.exe" }),
+                true,
+                false,
+            )
             .unwrap();
         assert_eq!(rec.status, ActionStatus::Unverified);
     }
@@ -1043,16 +1120,64 @@ mod tests {
         }]);
         let rec = rig.exec("gradle.stop", json!({}), false, false).unwrap();
         assert_eq!(rec.status, ActionStatus::NotEffective);
-        assert!(rec.verification.unwrap().detail.contains("same Gradle version"));
+        assert!(
+            rec.verification
+                .unwrap()
+                .detail
+                .contains("same Gradle version")
+        );
         assert_eq!(rec.reversibility, Reversibility::Recoverable);
     }
+    #[test]
+    fn app_data_found_by_the_deep_scan_can_never_be_cleaned_up() {
+        let t = tempfile::tempdir().unwrap();
+        let slack = t.path().join("AppData").join("Local").join("Slack");
+        write(&slack.join("cache.bin"), 100);
+        let rig = Rig::new(facts_with(vec![entry(&slack, EntryKind::AppData)]));
+        let args = json!({ "path": slack.to_string_lossy(), "permanent": true });
+        for r in [
+            rig.engine
+                .preview("cleanup.path", &args, &rig.ctx())
+                .map(|_| ()),
+            rig.exec("cleanup.path", args.clone(), true, true)
+                .map(|_| ()),
+        ] {
+            assert!(matches!(r, Err(ActionError::Refused(m)) if m.contains("do-not-touch")));
+        }
+        assert!(slack.exists());
+    }
 
-#[test]    fn a_container_that_keeps_running_is_not_effective() {        let mut rig = Rig::new(Facts::default());        rig.runner.still_running = true;        let rec = rig            .exec("docker.stop_container", json!({ "container": "redis" }), false, false)            .unwrap();        assert!(rec.success);        assert_eq!(rec.status, ActionStatus::NotEffective);        assert!(rec.verification.unwrap().detail.contains("still shows as running"));    }
+    #[test]
+    fn a_container_that_keeps_running_is_not_effective() {
+        let mut rig = Rig::new(Facts::default());
+        rig.runner.still_running = true;
+        let rec = rig
+            .exec(
+                "docker.stop_container",
+                json!({ "container": "redis" }),
+                false,
+                false,
+            )
+            .unwrap();
+        assert!(rec.success);
+        assert_eq!(rec.status, ActionStatus::NotEffective);
+        assert!(
+            rec.verification
+                .unwrap()
+                .detail
+                .contains("still shows as running")
+        );
+    }
     #[test]
     fn a_failed_action_has_no_verification_or_measurement() {
         let mut rig = Rig::new(Facts::default());
         rig.runner.fail = true;
-        let r = rig.exec("docker.stop_container", json!({ "container": "redis" }), false, false);
+        let r = rig.exec(
+            "docker.stop_container",
+            json!({ "container": "redis" }),
+            false,
+            false,
+        );
         assert!(r.is_err());
         let rec = &rig.engine.history()[0];
         assert_eq!(rec.status, ActionStatus::Failed);
@@ -1063,10 +1188,18 @@ mod tests {
     fn no_irreversible_spec_claims_rollback_and_classes_are_consistent() {
         for s in ActionEngine::default().list() {
             if s.reversibility == Reversibility::Irreversible {
-                assert!(!s.reversible, "{} is irreversible but offers rollback", s.id);
+                assert!(
+                    !s.reversible,
+                    "{} is irreversible but offers rollback",
+                    s.id
+                );
             }
             if s.reversibility == Reversibility::Reversible {
-                assert!(s.reversible, "{} claims REVERSIBLE without a rollback", s.id);
+                assert!(
+                    s.reversible,
+                    "{} claims REVERSIBLE without a rollback",
+                    s.id
+                );
             }
         }
     }

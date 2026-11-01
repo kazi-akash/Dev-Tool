@@ -73,7 +73,10 @@ fn candidate(p: &ProcessInfo) -> bool {
     p.tags
         .iter()
         .any(|t| matches!(*t, "gradle" | "nextjs" | "package-manager"))
-        || matches!(p.category, Category::Flutter | Category::Docker | Category::Android)
+        || matches!(
+            p.category,
+            Category::Flutter | Category::Docker | Category::Android
+        )
         || {
             let n = p.name.to_lowercase();
             n.starts_with("qemu-system")
@@ -96,8 +99,10 @@ pub fn detect(processes: &[ProcessInfo]) -> HashSet<ActivityKind> {
         let name = name.strip_suffix(".exe").unwrap_or(&name).to_string();
 
         if p.tags.contains(&"gradle") {
-            let client = cmd.contains("gradlewrappermain") || cmd.contains("gradle.launcher.gradlemain");
-            let busy_daemon = cmd.contains("gradledaemon") && p.cpu_percent >= GRADLE_DAEMON_BUSY_CPU;
+            let client =
+                cmd.contains("gradlewrappermain") || cmd.contains("gradle.launcher.gradlemain");
+            let busy_daemon =
+                cmd.contains("gradledaemon") && p.cpu_percent >= GRADLE_DAEMON_BUSY_CPU;
             if client || busy_daemon {
                 gradle = true;
             }
@@ -118,7 +123,9 @@ pub fn detect(processes: &[ProcessInfo]) -> HashSet<ActivityKind> {
             found.insert(ActivityKind::PackageBuild);
         }
         if (name == "docker" || name == "docker-compose")
-            && (padded.contains(" compose up ") || padded.contains(" compose  up ") || (name == "docker-compose" && padded.contains(" up ")))
+            && (padded.contains(" compose up ")
+                || padded.contains(" compose  up ")
+                || (name == "docker-compose" && padded.contains(" up ")))
         {
             found.insert(ActivityKind::DockerCompose);
         }
@@ -411,7 +418,10 @@ pub fn correlate(s: &SessionSummary, incidents: &[IncidentWindow]) -> Correlatio
         return Correlation {
             level: CorrelationLevel::None,
             incident_id: None,
-            statement: format!("No performance incident overlapped this {}.", s.label.to_lowercase()),
+            statement: format!(
+                "No performance incident overlapped this {}.",
+                s.label.to_lowercase()
+            ),
         };
     };
     let ram_growth = s.ram_peak_bytes.saturating_sub(s.ram_before_bytes);
@@ -452,7 +462,13 @@ mod tests {
     use super::*;
     use crate::processes::model::{Category, Evidence};
 
-    fn proc(name: &str, cmd: &str, cpu: f32, tags: Vec<&'static str>, cat: Category) -> ProcessInfo {
+    fn proc(
+        name: &str,
+        cmd: &str,
+        cpu: f32,
+        tags: Vec<&'static str>,
+        cat: Category,
+    ) -> ProcessInfo {
         ProcessInfo {
             pid: 1,
             name: name.into(),
@@ -470,17 +486,41 @@ mod tests {
 
     #[test]
     fn detects_gradle_client_and_busy_daemon_but_not_idle_daemon() {
-        let client = proc("java.exe", "java -classpath gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain assembleDebug", 1.0, vec!["gradle"], Category::Java);
+        let client = proc(
+            "java.exe",
+            "java -classpath gradle-wrapper.jar org.gradle.wrapper.GradleWrapperMain assembleDebug",
+            1.0,
+            vec!["gradle"],
+            Category::Java,
+        );
         assert!(detect(&[client]).contains(&ActivityKind::GradleBuild));
-        let busy = proc("java.exe", "java org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.5", 12.0, vec!["gradle"], Category::Java);
+        let busy = proc(
+            "java.exe",
+            "java org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.5",
+            12.0,
+            vec!["gradle"],
+            Category::Java,
+        );
         assert!(detect(&[busy]).contains(&ActivityKind::GradleBuild));
-        let idle = proc("java.exe", "java org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.5", 0.2, vec!["gradle"], Category::Java);
+        let idle = proc(
+            "java.exe",
+            "java org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.5",
+            0.2,
+            vec!["gradle"],
+            Category::Java,
+        );
         assert!(detect(&[idle]).is_empty(), "an idle daemon is not a build");
     }
 
     #[test]
     fn gradle_with_android_evidence_is_an_android_build() {
-        let p = proc("java.exe", "java org.gradle.wrapper.GradleWrapperMain assembleDebug -Pandroid", 5.0, vec!["gradle", "android"], Category::Android);
+        let p = proc(
+            "java.exe",
+            "java org.gradle.wrapper.GradleWrapperMain assembleDebug -Pandroid",
+            5.0,
+            vec!["gradle", "android"],
+            Category::Android,
+        );
         let d = detect(&[p]);
         assert!(d.contains(&ActivityKind::AndroidBuild));
         assert!(!d.contains(&ActivityKind::GradleBuild));
@@ -488,26 +528,77 @@ mod tests {
 
     #[test]
     fn detects_flutter_next_package_docker_emulator() {
-        let flutter = proc("dart.exe", "dart flutter_tools.snapshot build apk --release", 5.0, vec![], Category::Flutter);
+        let flutter = proc(
+            "dart.exe",
+            "dart flutter_tools.snapshot build apk --release",
+            5.0,
+            vec![],
+            Category::Flutter,
+        );
         assert!(detect(&[flutter]).contains(&ActivityKind::FlutterBuild));
-        let flutter_run = proc("dart.exe", "dart flutter_tools.snapshot run", 5.0, vec![], Category::Flutter);
-        assert!(detect(&[flutter_run]).is_empty(), "flutter run is not a build");
-        let next = proc("node.exe", "node C:\\app\\node_modules\\next\\dist\\bin\\next build", 5.0, vec!["nextjs"], Category::Node);
+        let flutter_run = proc(
+            "dart.exe",
+            "dart flutter_tools.snapshot run",
+            5.0,
+            vec![],
+            Category::Flutter,
+        );
+        assert!(
+            detect(&[flutter_run]).is_empty(),
+            "flutter run is not a build"
+        );
+        let next = proc(
+            "node.exe",
+            "node C:\\app\\node_modules\\next\\dist\\bin\\next build",
+            5.0,
+            vec!["nextjs"],
+            Category::Node,
+        );
         assert!(detect(&[next]).contains(&ActivityKind::NextBuild));
-        let pnpm = proc("node.exe", "node pnpm.cjs run build", 5.0, vec!["package-manager"], Category::Node);
+        let pnpm = proc(
+            "node.exe",
+            "node pnpm.cjs run build",
+            5.0,
+            vec!["package-manager"],
+            Category::Node,
+        );
         assert!(detect(&[pnpm]).contains(&ActivityKind::PackageBuild));
-        let compose = proc("docker.exe", "docker compose up -d", 1.0, vec![], Category::Docker);
+        let compose = proc(
+            "docker.exe",
+            "docker compose up -d",
+            1.0,
+            vec![],
+            Category::Docker,
+        );
         assert!(detect(&[compose]).contains(&ActivityKind::DockerCompose));
         let ps = proc("docker.exe", "docker ps", 1.0, vec![], Category::Docker);
         assert!(detect(&[ps]).is_empty());
-        let emu = proc("qemu-system-x86_64.exe", "qemu-system-x86_64 -avd Pixel_7", 20.0, vec![], Category::Android);
+        let emu = proc(
+            "qemu-system-x86_64.exe",
+            "qemu-system-x86_64 -avd Pixel_7",
+            20.0,
+            vec![],
+            Category::Android,
+        );
         assert!(detect(&[emu]).contains(&ActivityKind::AndroidEmulator));
     }
 
     #[test]
     fn next_build_under_pnpm_is_one_session_not_two() {
-        let pnpm = proc("node.exe", "node pnpm.cjs run build", 1.0, vec!["package-manager"], Category::Node);
-        let next = proc("node.exe", "node next\\dist\\bin\\next build", 5.0, vec!["nextjs"], Category::Node);
+        let pnpm = proc(
+            "node.exe",
+            "node pnpm.cjs run build",
+            1.0,
+            vec!["package-manager"],
+            Category::Node,
+        );
+        let next = proc(
+            "node.exe",
+            "node next\\dist\\bin\\next build",
+            5.0,
+            vec!["nextjs"],
+            Category::Node,
+        );
         let d = detect(&[pnpm, next]);
         assert_eq!(d.len(), 1);
         assert!(d.contains(&ActivityKind::NextBuild));
@@ -534,7 +625,12 @@ mod tests {
     fn records_before_peak_growth_and_new_processes() {
         let mut t = SessionTracker::default();
         let none = HashSet::new();
-        let gradle = |g: f64| vec![NamedBytes { name: "Android/Gradle".into(), bytes: (g * GIB as f64) as u64 }];
+        let gradle = |g: f64| {
+            vec![NamedBytes {
+                name: "Android/Gradle".into(),
+                bytes: (g * GIB as f64) as u64,
+            }]
+        };
         for s in 0..20 {
             t.observe(s as f64, &tick(s, 8.2, 51.0, &[], &[1, 2, 3]), &none);
         }
@@ -543,7 +639,11 @@ mod tests {
         t.observe(20.0, &tick(20, 8.4, 52.0, &w0, &[1, 2, 3]), &one(k));
         let w1 = gradle(5.3);
         for s in 21..60 {
-            t.observe(s as f64, &tick(s, 15.4, 96.0, &w1, &[1, 2, 3, 100, 101, 102]), &one(k));
+            t.observe(
+                s as f64,
+                &tick(s, 15.4, 96.0, &w1, &[1, 2, 3, 100, 101, 102]),
+                &one(k),
+            );
         }
         assert_eq!(t.active_labels(), vec!["Android build"]);
         let mut done = vec![];
@@ -579,7 +679,10 @@ mod tests {
             t.observe(s as f64, &tick(s, 5.0, 30.0, &[], &[]), &one(k));
         }
         for s in 40..46 {
-            assert!(t.observe(s as f64, &tick(s, 5.0, 30.0, &[], &[]), &none).is_empty());
+            assert!(
+                t.observe(s as f64, &tick(s, 5.0, 30.0, &[], &[]), &none)
+                    .is_empty()
+            );
         }
         for s in 46..50 {
             t.observe(s as f64, &tick(s, 5.0, 30.0, &[], &[]), &one(k));
@@ -622,14 +725,25 @@ mod tests {
             cpu_peak_percent: 50.0,
             disk_peak_percent: None,
             processes_created: 10,
-            workload_growth: if grew_gb > 0 { vec![NamedBytes { name: "Android/Gradle".into(), bytes: grew_gb * GIB }] } else { vec![] },
+            workload_growth: if grew_gb > 0 {
+                vec![NamedBytes {
+                    name: "Android/Gradle".into(),
+                    bytes: grew_gb * GIB,
+                }]
+            } else {
+                vec![]
+            },
             docker_change_bytes: 0,
             result: "CRITICAL MEMORY PRESSURE".into(),
             correlation: None,
         }
     }
 
-    const INC: IncidentWindow = IncidentWindow { id: 42, start_ms: 120_000, end_ms: 200_000 };
+    const INC: IncidentWindow = IncidentWindow {
+        id: 42,
+        start_ms: 120_000,
+        end_ms: 200_000,
+    };
 
     #[test]
     fn strong_needs_overlap_ram_growth_and_explained_growth() {
@@ -651,19 +765,40 @@ mod tests {
 
     #[test]
     fn no_overlap_means_no_correlation_claim() {
-        let far = IncidentWindow { id: 1, start_ms: 1_000_000, end_ms: 1_100_000 };
+        let far = IncidentWindow {
+            id: 1,
+            start_ms: 1_000_000,
+            end_ms: 1_100_000,
+        };
         let c = correlate(&summary(8, 15, 5), &[far]);
         assert_eq!(c.level, CorrelationLevel::None);
         assert_eq!(c.incident_id, None);
-        assert_eq!(correlate(&summary(8, 15, 5), &[]).level, CorrelationLevel::None);
+        assert_eq!(
+            correlate(&summary(8, 15, 5), &[]).level,
+            CorrelationLevel::None
+        );
     }
 
     #[test]
     fn incident_just_after_the_session_still_overlaps_within_slack() {
-        let after = IncidentWindow { id: 7, start_ms: 180_000, end_ms: 230_000 };
-        assert_ne!(correlate(&summary(8, 15, 5), &[after]).level, CorrelationLevel::None);
-        let later = IncidentWindow { id: 8, start_ms: 400_000, end_ms: 450_000 };
-        assert_eq!(correlate(&summary(8, 15, 5), &[later]).level, CorrelationLevel::None);
+        let after = IncidentWindow {
+            id: 7,
+            start_ms: 180_000,
+            end_ms: 230_000,
+        };
+        assert_ne!(
+            correlate(&summary(8, 15, 5), &[after]).level,
+            CorrelationLevel::None
+        );
+        let later = IncidentWindow {
+            id: 8,
+            start_ms: 400_000,
+            end_ms: 450_000,
+        };
+        assert_eq!(
+            correlate(&summary(8, 15, 5), &[later]).level,
+            CorrelationLevel::None
+        );
     }
 
     #[test]

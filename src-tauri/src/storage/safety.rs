@@ -24,6 +24,8 @@ pub enum EntryKind {
     VirtualDisk,
     UserData,
     LargeFile,
+    /// A per-app folder under AppData found by the optional deep scan. Report-only.
+    AppData,
     /// Reserved for entries no rule can place; always `RequiresReview`.
     #[allow(dead_code)]
     Unknown,
@@ -111,6 +113,10 @@ pub fn classify(kind: EntryKind) -> Classification {
         WslDisk => (
             DoNotTouch,
             "A WSL distribution's disk. Deleting it destroys that distribution.",
+        ),
+        AppData => (
+            DoNotTouch,
+            "Application data. Clear it from the app's own settings; DevPilot never offers to delete it.",
         ),
         UserData => (
             DoNotTouch,

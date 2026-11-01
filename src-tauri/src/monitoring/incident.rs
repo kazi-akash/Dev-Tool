@@ -13,9 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use super::pressure::PressureState;
-use super::telemetry::{
-    COMMIT_EXHAUSTED, DISK_SATURATED, MechanismKind, PAGING_HEAVY, classify,
-};
+use super::telemetry::{COMMIT_EXHAUSTED, DISK_SATURATED, MechanismKind, PAGING_HEAVY, classify};
 
 pub const PRE_BUFFER_SECS: f64 = 30.0;
 pub const POST_SECS: f64 = 60.0;
@@ -238,8 +236,7 @@ impl IncidentRecorder {
             }
             if should_trigger && now_secs >= self.cooldown_until {
                 let start_secs = self.pre.front().map_or(now_secs, |(ts, _)| *ts);
-                let mut samples: Vec<IncidentSample> =
-                    self.pre.drain(..).map(|(_, s)| s).collect();
+                let mut samples: Vec<IncidentSample> = self.pre.drain(..).map(|(_, s)| s).collect();
                 if samples.is_empty() {
                     samples.push(sample);
                 }
@@ -458,7 +455,12 @@ mod tests {
     }
 
     /// Feed one sample per second; return the summary if one is produced.
-    fn run(r: &mut IncidentRecorder, from: u64, to: u64, f: impl Fn(u64) -> IncidentSample) -> Vec<IncidentSummary> {
+    fn run(
+        r: &mut IncidentRecorder,
+        from: u64,
+        to: u64,
+        f: impl Fn(u64) -> IncidentSample,
+    ) -> Vec<IncidentSummary> {
         (from..to)
             .filter_map(|t| r.observe(t as f64, f(t), false))
             .collect()
@@ -513,7 +515,11 @@ mod tests {
         assert!(s.confidence >= 0.85);
         assert!(s.triggers.iter().any(|t| t.contains("critical threshold")));
         // ~30 s pre + 40 s severe + 60 s post
-        assert!((120..=135).contains(&s.duration_secs), "{}", s.duration_secs);
+        assert!(
+            (120..=135).contains(&s.duration_secs),
+            "{}",
+            s.duration_secs
+        );
     }
 
     #[test]
@@ -588,8 +594,14 @@ mod tests {
         let mk = |t: u64, g: f64| {
             let mut s = severe(t);
             s.workloads = vec![
-                NamedBytes { name: "Gradle".into(), bytes: (g * GB as f64) as u64 },
-                NamedBytes { name: "WSL2".into(), bytes: (4.8 * GB as f64) as u64 },
+                NamedBytes {
+                    name: "Gradle".into(),
+                    bytes: (g * GB as f64) as u64,
+                },
+                NamedBytes {
+                    name: "WSL2".into(),
+                    bytes: (4.8 * GB as f64) as u64,
+                },
             ];
             s
         };
@@ -635,6 +647,9 @@ mod tests {
     fn summary_serializes_camel_case() {
         let s = summarize(vec![severe(1)], vec!["x"]);
         let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("peakRamPercent") && j.contains("\"mechanism\":\"HEAVY_PAGING\""), "{j}");
+        assert!(
+            j.contains("peakRamPercent") && j.contains("\"mechanism\":\"HEAVY_PAGING\""),
+            "{j}"
+        );
     }
 }

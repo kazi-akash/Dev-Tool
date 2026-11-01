@@ -3,3 +3,4 @@ pub mod collector;
 pub mod model;
 pub mod redact;
 pub mod store;
+pub mod tree;

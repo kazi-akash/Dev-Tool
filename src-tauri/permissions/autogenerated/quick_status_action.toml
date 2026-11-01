@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-quick-status-action"
+description = "Enables the quick_status_action command without any pre-configured scope."
+commands.allow = ["quick_status_action"]
+
+[[permission]]
+identifier = "deny-quick-status-action"
+description = "Denies the quick_status_action command without any pre-configured scope."
+commands.deny = ["quick_status_action"]

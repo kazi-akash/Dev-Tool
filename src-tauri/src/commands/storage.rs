@@ -22,3 +22,12 @@ pub fn cancel_storage_scan(state: State<'_, Arc<StorageState>>) {
 pub fn get_storage_scan(state: State<'_, Arc<StorageState>>) -> ScanStatus {
     state.status()
 }
+
+/// Start the optional deep AppData scan. Only runs when the user explicitly asks for it: nothing
+/// else calls it, and it is never part of a normal scan. Report-only; it can never delete anything.
+#[tauri::command]
+pub fn start_deep_appdata_scan(state: State<'_, Arc<StorageState>>) -> bool {
+    state
+        .inner()
+        .start_deep(ScanEnv::from_system(), ScanOptions::default())
+}

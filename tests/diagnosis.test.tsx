@@ -40,8 +40,8 @@ describe("diagnosis page", () => {
 
   it("runs a recommendation's action only through the preview dialog", async () => {
     const user = userEvent.setup();
-    ipc.on("preview_action", preview({ actionId: "docker.stop_container", title: "Stop container redis-idle", risk: "LOW", requiresConfirmation: false, requiresDoubleConfirmation: false, warnings: [], estimatedBenefitBytes: null, reversible: true }));
-    ipc.on("execute_action", { id: 1, actionId: "docker.stop_container", name: "Stop Docker container", atMs: 1, risk: "LOW", automated: false, success: true, summary: "Stopped container redis-idle.", freedBytes: null, rolledBack: false, reversible: true });
+    ipc.on("preview_action", preview({ actionId: "docker.stop_container", title: "Stop container redis-idle", risk: "LOW", requiresConfirmation: false, requiresDoubleConfirmation: false, warnings: [], estimatedBenefitBytes: null, reversible: true, reversibility: "REVERSIBLE" }));
+    ipc.on("execute_action", { id: 1, actionId: "docker.stop_container", name: "Stop Docker container", atMs: 1, risk: "LOW", automated: false, success: true, summary: "Stopped container redis-idle.", freedBytes: null, rolledBack: false, reversible: true, reversibility: "REVERSIBLE", status: "SUCCESS", verification: { state: "VERIFIED", detail: "Confirmed." }, measurement: null });
     mount();
     await user.click(await screen.findByRole("button", { name: "Stop container redis-idle" }));
     const dialog = await screen.findByRole("dialog");

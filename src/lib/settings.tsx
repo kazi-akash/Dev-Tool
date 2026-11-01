@@ -18,6 +18,8 @@ export interface Settings {
   diskThresholds: DiskThresholds;
   /** Opt-in: clean old temporary files automatically when a drive runs low. */
   safeAutomation: boolean;
+  /** Windows toast notifications for critical RAM/disk, escalation, incidents, finished scans and actions. */
+  notifications: boolean;
   ai: AiSettings;
 }
 
@@ -32,6 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
   pressureThresholds: DEFAULT_PRESSURE,
   diskThresholds: DEFAULT_DISK,
   safeAutomation: false,
+  notifications: true,
   ai: { enabled: false, kind: "openAi", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
 };
 
@@ -93,6 +96,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     call("set_safe_automation", { enabled: settings.safeAutomation }).catch(() => {});
   }, [settings.safeAutomation]);
+
+  useEffect(() => {
+    call("set_notifications_enabled", { enabled: settings.notifications }).catch(() => {});
+  }, [settings.notifications]);
 
   useEffect(() => {
     applyTheme(settings.theme);

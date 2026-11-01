@@ -70,8 +70,9 @@ test("diagnosis: a medium-risk action needs confirmation and is previewed first"
         requiresConfirmation: true,
         requiresDoubleConfirmation: false,
         reversible: false,
+        reversibility: "IRREVERSIBLE",
       },
-      execute_action: { id: 1, actionId: "wsl.shutdown", name: "Shut down WSL", atMs: 1, risk: "MEDIUM", automated: false, success: true, summary: "WSL was shut down.", freedBytes: null, rolledBack: false, reversible: false },
+      execute_action: { id: 1, actionId: "wsl.shutdown", name: "Shut down WSL", atMs: 1, risk: "MEDIUM", automated: false, success: true, summary: "WSL was shut down.", freedBytes: null, rolledBack: false, reversible: false, reversibility: "IRREVERSIBLE", status: "SUCCESS", verification: { state: "VERIFIED", detail: "Confirmed." }, measurement: null },
     },
   );
   await page.goto("/#/diagnosis");
@@ -95,7 +96,7 @@ test("diagnosis: a medium-risk action needs confirmation and is previewed first"
 
 test("escape closes the dialog without running anything", async ({ page }) => {
   await installBridge(page, {
-    preview_action: { actionId: "wsl.shutdown", title: "Shut down WSL", summary: "x", risk: "MEDIUM", items: [{ label: "wsl --shutdown", detail: null, bytes: null }], estimatedBenefitBytes: null, warnings: [], requiresConfirmation: true, requiresDoubleConfirmation: false, reversible: false },
+    preview_action: { actionId: "wsl.shutdown", title: "Shut down WSL", summary: "x", risk: "MEDIUM", items: [{ label: "wsl --shutdown", detail: null, bytes: null }], estimatedBenefitBytes: null, warnings: [], requiresConfirmation: true, requiresDoubleConfirmation: false, reversible: false, reversibility: "IRREVERSIBLE" },
   });
   await page.goto("/#/diagnosis");
   await page.getByRole("button", { name: "Shut down WSL" }).click();
@@ -114,8 +115,8 @@ test("storage: scan, review node_modules, double confirmation, row disappears", 
     page,
     {
       start_storage_scan: true,
-      preview_action: { actionId: "cleanup.path", title: "Delete node_modules", summary: "6.4 GB", risk: "DESTRUCTIVE", items: [{ label: "S:\\proj\\node_modules", detail: "NodeModules", bytes: 6.4 * GB }], estimatedBenefitBytes: 6.4 * GB, warnings: ["Deleted permanently. It is not moved to the Recycle Bin."], requiresConfirmation: true, requiresDoubleConfirmation: true, reversible: false },
-      execute_action: { id: 1, actionId: "cleanup.path", name: "Delete a scanned item", atMs: 1, risk: "DESTRUCTIVE", automated: false, success: true, summary: "Deleted and freed 6.4 GB.", freedBytes: 6.4 * GB, rolledBack: false, reversible: false },
+      preview_action: { actionId: "cleanup.path", title: "Delete node_modules", summary: "6.4 GB", risk: "DESTRUCTIVE", items: [{ label: "S:\\proj\\node_modules", detail: "NodeModules", bytes: 6.4 * GB }], estimatedBenefitBytes: 6.4 * GB, warnings: ["Deleted permanently. It is not moved to the Recycle Bin."], requiresConfirmation: true, requiresDoubleConfirmation: true, reversible: false, reversibility: "IRREVERSIBLE" },
+      execute_action: { id: 1, actionId: "cleanup.path", name: "Delete a scanned item", atMs: 1, risk: "DESTRUCTIVE", automated: false, success: true, summary: "Deleted and freed 6.4 GB.", freedBytes: 6.4 * GB, rolledBack: false, reversible: false, reversibility: "IRREVERSIBLE", status: "SUCCESS", verification: { state: "VERIFIED", detail: "Confirmed." }, measurement: null },
     },
     {
       // Idle until the user starts a scan, then complete.

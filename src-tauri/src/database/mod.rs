@@ -8,12 +8,12 @@ use serde::Serialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Row as _, SqlitePool};
 
-use crate::monitoring::incident::IncidentSummary;
 use crate::developers::sessions::SessionSummary;
 use crate::history::aggregate::{
     BUCKET_1H, BUCKET_1M, BUCKET_5M, DiskPoint, EVENTS_KEEP_MS, HOUR_KEEP_MS, MIN1_KEEP_MS,
     MIN5_KEEP_MS, RAW_KEEP_MS, Row, TopPoint, bucket_for_range, cutoff, merge,
 };
+use crate::monitoring::incident::IncidentSummary;
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -338,7 +338,6 @@ impl Database {
             .collect())
     }
 
-
     // --- incidents -------------------------------------------------------------------------------
 
     /// Store an incident summary; returns its id. The full summary is kept as JSON, the columns
@@ -369,11 +368,13 @@ impl Database {
 
     /// Newest first. Rows whose JSON no longer parses (older schema) are skipped, not fatal.
     pub async fn recent_incidents(&self, limit: i64) -> Result<Vec<IncidentSummary>, String> {
-        let rows = sqlx::query("SELECT id, summary_json FROM incidents ORDER BY start_ms DESC, id DESC LIMIT ?")
-            .bind(limit.clamp(1, 200))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(err)?;
+        let rows = sqlx::query(
+            "SELECT id, summary_json FROM incidents ORDER BY start_ms DESC, id DESC LIMIT ?",
+        )
+        .bind(limit.clamp(1, 200))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(err)?;
         Ok(rows
             .iter()
             .filter_map(|r| {
@@ -742,7 +743,11 @@ mod tests {
         assert_eq!(a[0].summary, "n2");
         assert!(!a[0].success && a[1].automated);
         assert_eq!(a[0].reversibility, "RECOVERABLE");
-        assert_eq!(a[0].ram_recovered_bytes, Some(-5), "negative measurements survive storage");
+        assert_eq!(
+            a[0].ram_recovered_bytes,
+            Some(-5),
+            "negative measurements survive storage"
+        );
         assert_eq!(
             db.recent_actions(10).await.unwrap()[2].freed_bytes,
             Some(42)
@@ -827,7 +832,9 @@ mod incident_tests {
 #[cfg(test)]
 mod session_tests {
     use super::*;
-    use crate::developers::sessions::{ActivityKind, Correlation, CorrelationLevel, SessionSummary};
+    use crate::developers::sessions::{
+        ActivityKind, Correlation, CorrelationLevel, SessionSummary,
+    };
 
     fn mk(start: u64) -> SessionSummary {
         SessionSummary {
@@ -864,6 +871,9 @@ mod session_tests {
         let list = db.recent_sessions(10).await.unwrap();
         assert_eq!(list[0].start_ms, 9_000);
         assert_eq!(list[1].docker_change_bytes, -5);
-        assert!(list[1].correlation.is_none(), "correlation is computed at query time");
+        assert!(
+            list[1].correlation.is_none(),
+            "correlation is computed at query time"
+        );
     }
 }

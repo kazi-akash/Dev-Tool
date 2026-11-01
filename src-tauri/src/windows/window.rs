@@ -69,7 +69,9 @@ pub fn show_main_window(app: &AppHandle, route: Option<&str>) {
 
 /// The window may close normally: DevPilot keeps running in the tray (see `RunEvent::ExitRequested`
 /// in `lib.rs`), and the destroyed WebView releases its memory.
-pub fn on_window_event(_window: &Window, _event: &WindowEvent) {}
+pub fn on_window_event(window: &Window, event: &WindowEvent) {
+    super::quick::on_window_event(window, event);
+}
 
 #[cfg(test)]
 mod tests {

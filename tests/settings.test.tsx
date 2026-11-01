@@ -7,7 +7,7 @@ import { ipc } from "./ipc-mock";
 
 function mount() {
   ipc.on("ai_key_status", false);
-  for (const c of ["set_monitor_interval", "set_pressure_thresholds", "set_disk_thresholds", "set_safe_automation"]) ipc.on(c, undefined);
+  for (const c of ["set_monitor_interval", "set_pressure_thresholds", "set_disk_thresholds", "set_safe_automation", "set_notifications_enabled"]) ipc.on(c, undefined);
   return render(
     <SettingsProvider>
       <SettingsPage />
@@ -116,5 +116,77 @@ describe("settings: AI", () => {
     ipc.on("preview_ai_payload", { system: { ram: "x", cpu: "1%", pressure: "NORMAL", trend: "STABLE", disks: [] }, workloads: [], topProcesses: [], diagnosisStatus: "healthy", findings: [] });
     await user.click(screen.getByRole("button", { name: "Show exactly what would be sent" }));
     expect(await screen.findByLabelText("AI payload preview")).toHaveTextContent("diagnosisStatus");
+  });
+});
+
+describe("settings: notifications", () => {
+  it("is on by default, is pushed to Rust, and can be turned off", async () => {
+    const user = userEvent.setup();
+    mount();
+    const sw = screen.getByRole("switch", { name: "Show desktop notifications" });
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    await waitFor(() => expect(ipc.calledWith("set_notifications_enabled")[0].args).toEqual({ enabled: true }));
+    await user.click(sw);
+    await waitFor(() => expect(ipc.calledWith("set_notifications_enabled").at(-1)!.args).toEqual({ enabled: false }));
+    expect(screen.getByRole("button", { name: "Send a test notification" })).toBeDisabled();
+  });
+
+  it("the test button asks Rust for a toast and shows a failure instead of hiding it", async () => {
+    const user = userEvent.setup();
+    mount();
+    ipc.on("send_test_notification", () => {
+      throw "toast notifications are only available on Windows";
+    });
+    await user.click(screen.getByRole("button", { name: "Send a test notification" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("only available on Windows");
+    expect(ipc.calledWith("send_test_notification")).toHaveLength(1);
+  });
+});
+
+describe("settings: start with Windows", () => {
+  const status = (over = {}) => ({ enabled: false, pointsToThisApp: false, command: null, ...over });
+
+  it("is off by default, reads the real state, and writes only when the user flips it", async () => {
+    const user = userEvent.setup();
+    let state = status();
+    ipc.on("get_start_with_windows", () => state);
+    ipc.on("set_start_with_windows", (a) => {
+      state = status({ enabled: a!.enabled, pointsToThisApp: a!.enabled, command: a!.enabled ? "\"C:\DevPilot\devpilot.exe\" --minimized" : null });
+      return state;
+    });
+    mount();
+    const sw = await screen.findByRole("switch", { name: "Start DevPilot with Windows" });
+    await waitFor(() => expect(sw).toBeEnabled());
+    expect(sw).toHaveAttribute("aria-checked", "false");
+    expect(ipc.calledWith("set_start_with_windows")).toHaveLength(0);
+    expect(screen.getByText(/Off unless you turn it on/)).toBeInTheDocument();
+    expect(screen.getByText(/the window does not open/)).toBeInTheDocument();
+    await user.click(sw);
+    await waitFor(() => expect(ipc.calledWith("set_start_with_windows")[0].args).toEqual({ enabled: true }));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Start DevPilot with Windows" })).toHaveAttribute("aria-checked", "true"));
+  });
+
+  it("warns when Windows would start a different copy and offers to repoint it", async () => {
+    const user = userEvent.setup();
+    ipc.on("get_start_with_windows", status({ enabled: true, pointsToThisApp: false, command: "\"D:\old\devpilot.exe\" --minimized" }));
+    ipc.on("set_start_with_windows", status({ enabled: true, pointsToThisApp: true }));
+    mount();
+    expect(await screen.findByText(/different copy of DevPilot/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Use this copy instead" }));
+    expect(ipc.calledWith("set_start_with_windows")[0].args).toEqual({ enabled: true });
+  });
+
+  it("shows a failure and the real state instead of pretending it worked", async () => {
+    const user = userEvent.setup();
+    ipc.on("get_start_with_windows", status());
+    ipc.on("set_start_with_windows", () => {
+      throw "cannot add DevPilot to Windows startup: access denied";
+    });
+    mount();
+    const sw = await screen.findByRole("switch", { name: "Start DevPilot with Windows" });
+    await waitFor(() => expect(sw).toBeEnabled());
+    await user.click(sw);
+    expect(await screen.findByText(/access denied/)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Start DevPilot with Windows" })).toHaveAttribute("aria-checked", "false");
   });
 });

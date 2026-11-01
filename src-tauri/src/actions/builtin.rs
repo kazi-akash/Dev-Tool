@@ -128,20 +128,22 @@ impl Action for StopContainer {
             return Verification::unverifiable("No container name to check.");
         };
         let filter = format!("name=^{name}$");
-        match ctx
-            .runner
-            .run("docker", &["ps", "--filter", &filter, "--format", "{{.Names}}"])
-        {
-            Ok(out) if out.trim().is_empty() => {
-                Verification::verified(format!("{name} is no longer in the running container list."))
-            }
+        match ctx.runner.run(
+            "docker",
+            &["ps", "--filter", &filter, "--format", "{{.Names}}"],
+        ) {
+            Ok(out) if out.trim().is_empty() => Verification::verified(format!(
+                "{name} is no longer in the running container list."
+            )),
             Ok(_) => Verification::not_confirmed(format!("{name} still shows as running.")),
             Err(e) => Verification::unverifiable(format!("Docker could not be queried: {e}")),
         }
     }
 
     fn measure_note(&self) -> Option<&'static str> {
-        Some("Docker Desktop's WSL2 VM often keeps memory after a container stops, so RAM may not drop until the VM shrinks or WSL is shut down.")
+        Some(
+            "Docker Desktop's WSL2 VM often keeps memory after a container stops, so RAM may not drop until the VM shrinks or WSL is shut down.",
+        )
     }
 
     fn rollback(&self, o: &Outcome, ctx: &Ctx) -> Option<Result<String, ActionError>> {

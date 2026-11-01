@@ -132,6 +132,11 @@ pub fn get_safe_automation(actions: State<'_, Arc<ActionsState>>) -> bool {
 }
 
 #[tauri::command]
-pub fn set_safe_automation(actions: State<'_, Arc<ActionsState>>, enabled: bool) {
+pub fn set_safe_automation(
+    actions: State<'_, Arc<ActionsState>>,
+    prefs: State<'_, Arc<crate::prefs::PrefsStore>>,
+    enabled: bool,
+) {
+    prefs.update(|p| p.safe_automation = Some(enabled));
     actions.automation.set_enabled(enabled);
 }

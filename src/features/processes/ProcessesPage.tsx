@@ -5,7 +5,11 @@ import { useProcesses } from "@/hooks/useProcesses";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { CATEGORIES, type Category, type ProcessInfo, type SortBy } from "@/types/process";
+import { useVirtualWindow } from "@/hooks/useVirtualWindow";
 import { DockerPanel } from "./DockerPanel";
+import { ProcessTreeView } from "./ProcessTreeView";
+
+const ROW_HEIGHT = 36;
 
 const SORTS: { value: SortBy; label: string }[] = [
   { value: "memory", label: "Memory" },
@@ -58,8 +62,11 @@ export function ProcessesPage() {
   const [category, setCategory] = useState<Category | undefined>(undefined);
   const [limit, setLimit] = useState(100);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [mode, setMode] = useState<"list" | "tree">("list");
 
   const list = useProcesses({ limit, sortBy, category });
+  const processes = list?.processes ?? [];
+  const { ref: scrollRef, range } = useVirtualWindow(processes.length, { rowHeight: ROW_HEIGHT });
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -75,7 +82,16 @@ export function ProcessesPage() {
       <DockerPanel />
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <div className="flex items-center gap-1" role="group" aria-label="Sort by">
+        <div className="flex items-center gap-1" role="group" aria-label="View">
+          <span className="mr-1 text-xs text-muted-foreground">View</span>
+          {(["list", "tree"] as const).map((m) => (
+            <Button key={m} size="sm" variant={mode === m ? "default" : "outline"} aria-pressed={mode === m} onClick={() => setMode(m)}>
+              {m === "list" ? "List" : "Tree"}
+            </Button>
+          ))}
+        </div>
+
+        <div className={cn("flex items-center gap-1", mode === "tree" && "hidden")} role="group" aria-label="Sort by">
           <span className="mr-1 text-xs text-muted-foreground">Sort</span>
           {SORTS.map((s) => (
             <Button
@@ -90,7 +106,7 @@ export function ProcessesPage() {
           ))}
         </div>
 
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <label className={cn("flex items-center gap-2 text-xs text-muted-foreground", mode === "tree" && "hidden")}>
           Category
           <select
             className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
@@ -106,7 +122,7 @@ export function ProcessesPage() {
           </select>
         </label>
 
-        <div className="flex items-center gap-1" role="group" aria-label="Rows">
+        <div className={cn("flex items-center gap-1", mode === "tree" && "hidden")} role="group" aria-label="Rows">
           <span className="mr-1 text-xs text-muted-foreground">Rows</span>
           {LIMITS.map((n) => (
             <Button
@@ -122,55 +138,72 @@ export function ProcessesPage() {
         </div>
       </div>
 
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
-            <tr>
-              <th className="px-4 py-2 font-medium">Name</th>
-              <th className="px-3 py-2 font-medium">PID</th>
-              <th className="px-3 py-2 font-medium">Category</th>
-              <th className="px-3 py-2 text-right font-medium">CPU</th>
-              <th className="px-4 py-2 text-right font-medium">Memory</th>
-            </tr>
-          </thead>
-          <tbody>
-            {list?.processes.map((p) => {
-              const open = expanded === p.pid;
-              return (
-                <Fragment key={`${p.pid}-${p.startTime}`}>
-                  <tr
-                    className={cn("cursor-pointer border-b last:border-0 hover:bg-accent/50", open && "bg-accent/40")}
-                    onClick={() => setExpanded(open ? null : p.pid)}
-                    aria-expanded={open}
-                  >
-                    <td className="max-w-[18rem] truncate px-4 py-1.5 font-medium">{p.name}</td>
-                    <td className="px-3 py-1.5 tabular-nums text-muted-foreground">{p.pid}</td>
-                    <td className="px-3 py-1.5">
-                      <CategoryBadge category={p.category} />
-                    </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{p.cpuPercent.toFixed(1)}%</td>
-                    <td className="px-4 py-1.5 text-right tabular-nums">{formatBytes(p.memoryBytes)}</td>
+      {mode === "tree" && <ProcessTreeView />}
+
+      {mode === "list" && (
+        <Card className="overflow-hidden">
+          <div ref={scrollRef} className={cn(range.padTop + range.padBottom > 0 || processes.length > 100 ? "max-h-[36rem] overflow-y-auto" : "")}>
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 border-b bg-muted text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Name</th>
+                  <th className="px-3 py-2 font-medium">PID</th>
+                  <th className="px-3 py-2 font-medium">Category</th>
+                  <th className="px-3 py-2 text-right font-medium">CPU</th>
+                  <th className="px-4 py-2 text-right font-medium">Memory</th>
+                </tr>
+              </thead>
+              <tbody>
+                {range.padTop > 0 && (
+                  <tr aria-hidden style={{ height: range.padTop }}>
+                    <td colSpan={5} />
                   </tr>
-                  {open && (
-                    <tr className="border-b">
-                      <td colSpan={5} className="p-0">
-                        <Detail p={p} />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-            {list && list.processes.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
-                  No processes match this filter.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </Card>
+                )}
+                {processes.slice(range.start, range.end).map((p) => {
+                  const open = expanded === p.pid;
+                  return (
+                    <Fragment key={`${p.pid}-${p.startTime}`}>
+                      <tr
+                        className={cn("cursor-pointer border-b last:border-0 hover:bg-accent/50", open && "bg-accent/40")}
+                        style={{ height: ROW_HEIGHT }}
+                        onClick={() => setExpanded(open ? null : p.pid)}
+                        aria-expanded={open}
+                      >
+                        <td className="max-w-[18rem] truncate px-4 py-1.5 font-medium">{p.name}</td>
+                        <td className="px-3 py-1.5 tabular-nums text-muted-foreground">{p.pid}</td>
+                        <td className="px-3 py-1.5">
+                          <CategoryBadge category={p.category} />
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">{p.cpuPercent.toFixed(1)}%</td>
+                        <td className="px-4 py-1.5 text-right tabular-nums">{formatBytes(p.memoryBytes)}</td>
+                      </tr>
+                      {open && (
+                        <tr className="border-b">
+                          <td colSpan={5} className="p-0">
+                            <Detail p={p} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {range.padBottom > 0 && (
+                  <tr aria-hidden style={{ height: range.padBottom }}>
+                    <td colSpan={5} />
+                  </tr>
+                )}
+                {list && processes.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                      No processes match this filter.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

@@ -96,7 +96,11 @@ fn free_space_for(path: &Path, disks: &sysinfo::Disks) -> Option<u64> {
     disks
         .iter()
         .filter(|d| {
-            let m = d.mount_point().to_string_lossy().to_lowercase().replace('/', "\\");
+            let m = d
+                .mount_point()
+                .to_string_lossy()
+                .to_lowercase()
+                .replace('/', "\\");
             !m.is_empty() && p.starts_with(&m)
         })
         .max_by_key(|d| d.mount_point().as_os_str().len())
@@ -131,7 +135,10 @@ impl Trasher for RealTrasher {
             .filter(|i| same_path(&i.original_path(), original))
             .collect();
         if items.is_empty() {
-            return Err("The item is no longer in the Recycle Bin (it may have been emptied or restored).".into());
+            return Err(
+                "The item is no longer in the Recycle Bin (it may have been emptied or restored)."
+                    .into(),
+            );
         }
         trash::os_limited::restore_all(items).map_err(|e| e.to_string())
     }

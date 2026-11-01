@@ -11,8 +11,8 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use crate::database::{Database, StoredAction, StoredDiagnosis};
 use crate::developers::sessions::SessionSummary;
 use crate::developers::workloads::Workload;
-use crate::monitoring::metrics::SystemSnapshot;
 use crate::monitoring::incident::IncidentSummary;
+use crate::monitoring::metrics::SystemSnapshot;
 use aggregate::{DiskPoint, Row, TopPoint};
 
 const FLUSH_EVERY: Duration = Duration::from_secs(10);

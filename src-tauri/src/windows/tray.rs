@@ -18,11 +18,23 @@ pub const MENU_QUIT: &str = "quit";
 /// Frontend route opened by a tray menu entry, if it opens one.
 pub fn route_for(menu_id: &str) -> Option<&'static str> {
     match menu_id {
-        MENU_OPEN | MENU_STATUS => Some("/"),
+        MENU_OPEN => Some("/"),
         MENU_SCAN_STORAGE => Some("/storage"),
         MENU_DIAGNOSIS => Some("/diagnosis"),
         MENU_SETTINGS => Some("/settings"),
         _ => None,
+    }
+}
+
+/// Handle one tray menu entry (also used by the quick-status popup buttons).
+pub fn run_menu_action(app: &AppHandle, id: &str) {
+    if id == MENU_QUIT {
+        app.exit(0);
+    } else if id == MENU_STATUS {
+        super::quick::show_quick_status(app);
+    } else if let Some(route) = route_for(id) {
+        // Shows the window, recreating it if it was closed, and opens the route.
+        show_main_window(app, Some(route));
     }
 }
 
@@ -54,17 +66,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("DevPilot")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| {
-            let id = event.id().as_ref();
-            if id == MENU_QUIT {
-                app.exit(0);
-                return;
-            }
-            if let Some(route) = route_for(id) {
-                // Shows the window, recreating it if it was closed, and opens the route.
-                show_main_window(app, Some(route));
-            }
-        })
+        .on_menu_event(|app, event| run_menu_action(app, event.id().as_ref()))
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
@@ -90,7 +92,11 @@ mod tests {
     #[test]
     fn menu_entries_map_to_routes() {
         assert_eq!(route_for(MENU_OPEN), Some("/"));
-        assert_eq!(route_for(MENU_STATUS), Some("/"));
+        assert_eq!(
+            route_for(MENU_STATUS),
+            None,
+            "status opens the popup, not a page"
+        );
         assert_eq!(route_for(MENU_SCAN_STORAGE), Some("/storage"));
         assert_eq!(route_for(MENU_DIAGNOSIS), Some("/diagnosis"));
         assert_eq!(route_for(MENU_SETTINGS), Some("/settings"));

@@ -197,7 +197,10 @@ mod tests {
     #[test]
     fn host_total_is_not_double_counted_with_containers() {
         let w = workload(Some(4 * GB + 800 * MB), GB);
-        let d = status(vec![c("api", Some(1400), true), c("mysql", Some(1100), true)]);
+        let d = status(vec![
+            c("api", Some(1400), true),
+            c("mysql", Some(1100), true),
+        ]);
         let b = breakdown(std::slice::from_ref(&w), &d).unwrap();
         assert_eq!(b.host_total_bytes, w.memory_bytes, "host figure only");
         assert_eq!(b.containers_reported_bytes, Some(2500 * MB));
@@ -226,7 +229,10 @@ mod tests {
         let d = status(vec![c("api", Some(1400), true), c("odd", None, true)]);
         let b = breakdown(&[w], &d).unwrap();
         assert_eq!(b.level, AttributionLevel::Partial);
-        assert_eq!(b.unattributed_vm_bytes, None, "no remainder with an unknown part");
+        assert_eq!(
+            b.unattributed_vm_bytes, None,
+            "no remainder with an unknown part"
+        );
         assert_eq!(b.containers.last().unwrap().memory_bytes, None);
         assert!(b.notes.iter().any(|n| n.contains("not as zero")));
     }
@@ -278,6 +284,10 @@ mod tests {
         let b = breakdown(&[w], &status(vec![c("old", None, false)])).unwrap();
         assert!(b.containers.is_empty());
         assert_eq!(b.containers_reported_bytes, None);
-        assert!(b.notes.iter().any(|n| n.contains("No containers are running")));
+        assert!(
+            b.notes
+                .iter()
+                .any(|n| n.contains("No containers are running"))
+        );
     }
 }

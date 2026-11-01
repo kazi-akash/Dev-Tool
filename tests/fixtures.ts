@@ -134,6 +134,8 @@ export function scanStatus(entries: ScanEntry[], over: Partial<ScanStatus> = {})
     progress: { phase: "Done", currentPath: "", entriesFound: entries.length, itemsVisited: 1000 },
     error: null,
     result: { startedAtMs: 1, durationMs: 4200, complete: true, unreadable: 0, notes: [], entries },
+    deepResult: null,
+    deep: false,
     ...over,
   };
 }

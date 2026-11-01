@@ -7,11 +7,12 @@
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use super::governor::{CHECK_EVERY, Gate, GovernorHandle, PAUSE_POLL, RUN_SLEEP, THROTTLE_SLEEP};
 use super::paths::{has_traversal, is_protected};
 use super::safety::{EntryKind, Safety, classify, kind_from_extension};
 
@@ -25,6 +26,8 @@ pub struct ScanOptions {
     pub apk_min_age_days: u64,
     pub apk_min_bytes: u64,
     pub max_visited: usize,
+    /// Asked every few hundred entries whether to run, slow down or pause. `None` (tests) never waits.
+    pub governor: Option<GovernorHandle>,
 }
 
 impl Default for ScanOptions {
@@ -36,6 +39,7 @@ impl Default for ScanOptions {
             apk_min_age_days: 30,
             apk_min_bytes: 5 * MIB,
             max_visited: 8_000_000,
+            governor: None,
         }
     }
 }
@@ -45,6 +49,8 @@ impl Default for ScanOptions {
 pub struct ScanEnv {
     pub user_profile: Option<PathBuf>,
     pub local_app_data: Option<PathBuf>,
+    /// `%APPDATA%` (Roaming). Only the optional deep scan reads it.
+    pub roaming_app_data: Option<PathBuf>,
     pub temp: Option<PathBuf>,
     /// Folders scanned for project artifacts.
     pub dev_roots: Vec<PathBuf>,
@@ -92,6 +98,7 @@ impl ScanEnv {
         Self {
             user_profile,
             local_app_data: var("LOCALAPPDATA"),
+            roaming_app_data: var("APPDATA"),
             temp: var("TEMP").or_else(|| var("TMP")),
             dev_roots,
             user_folders,
@@ -159,6 +166,7 @@ pub fn kind_label(kind: EntryKind) -> &'static str {
         UserData => "Personal folder",
         LargeFile => "Large file",
         Unknown => "Unknown",
+        AppData => "Application data",
     }
 }
 
@@ -170,6 +178,9 @@ struct Ctx<'a> {
     visited: AtomicUsize,
     unreadable: AtomicUsize,
     stopped: AtomicBool,
+    governor: Option<GovernorHandle>,
+    /// Time spent paused; it does not count against the time budget.
+    paused_ms: AtomicU64,
 }
 
 impl Ctx<'_> {
@@ -180,7 +191,8 @@ impl Ctx<'_> {
         }
         let v = self.visited.load(Ordering::Relaxed);
         if self.cancel.load(Ordering::Relaxed)
-            || Instant::now() >= self.deadline
+            || Instant::now()
+                >= self.deadline + Duration::from_millis(self.paused_ms.load(Ordering::Relaxed))
             || v >= self.max_visited
         {
             self.stopped.store(true, Ordering::Relaxed);
@@ -196,6 +208,46 @@ impl Ctx<'_> {
         {
             p.items_visited = v;
             p.current_path = path.to_string_lossy().into_owned();
+        }
+        if v.is_multiple_of(CHECK_EVERY) {
+            self.govern();
+        }
+    }
+
+    /// Slow down, or wait, according to the governor. Returns early when the scan is cancelled.
+    fn govern(&self) {
+        let Some(g) = &self.governor else {
+            return;
+        };
+        match g.check() {
+            Gate::Run => std::thread::sleep(RUN_SLEEP),
+            Gate::Throttle(_) => std::thread::sleep(THROTTLE_SLEEP),
+            Gate::Pause(reason) => {
+                let began = Instant::now();
+                let previous = self
+                    .progress
+                    .lock()
+                    .map(|p| p.phase.clone())
+                    .unwrap_or_default();
+                while !self.cancel.load(Ordering::Relaxed) {
+                    if let Ok(mut p) = self.progress.lock() {
+                        p.phase = format!("Paused: {reason}");
+                    }
+                    std::thread::sleep(PAUSE_POLL);
+                    if !matches!(g.check(), Gate::Pause(_)) {
+                        break;
+                    }
+                }
+                if self.cancel.load(Ordering::Relaxed) {
+                    // Cancelled while waiting: stop now instead of finishing the walk.
+                    self.stopped.store(true, Ordering::Relaxed);
+                }
+                self.paused_ms
+                    .fetch_add(began.elapsed().as_millis() as u64, Ordering::Relaxed);
+                if let Ok(mut p) = self.progress.lock() {
+                    p.phase = previous;
+                }
+            }
         }
     }
 
@@ -493,6 +545,8 @@ pub fn run_scan(
         visited: AtomicUsize::new(0),
         unreadable: AtomicUsize::new(0),
         stopped: AtomicBool::new(false),
+        governor: opts.governor.clone(),
+        paused_ms: AtomicU64::new(0),
     };
     let mut entries: Vec<ScanEntry> = Vec::new();
     let mut notes = Vec::new();
@@ -609,6 +663,154 @@ pub fn run_scan(
     }
 }
 
+// --- optional deep AppData scan ------------------------------------------------------------------
+
+/// Per-app folders reported by the deep scan must be at least this big.
+const DEEP_MIN_BYTES: u64 = 100 * MIB;
+/// A deep scan may run much longer than the normal one; it is throttled and pauses under pressure.
+pub const DEEP_TIME_BUDGET: Duration = Duration::from_secs(15 * 60);
+/// Rest between two top-level folders, on top of the governor's own pauses.
+const DEEP_FOLDER_REST: Duration = Duration::from_millis(25);
+/// How many app folders are reported.
+const DEEP_MAX_ENTRIES: usize = 60;
+
+/// AppData folders that hold Windows or system-owned state, not app data. They are never measured,
+/// let alone listed: sizing them says nothing a user could act on, and some are sensitive.
+const DEEP_SKIP: &[&str] = &[
+    "microsoft",
+    "packages",
+    "temp",
+    "connecteddevicesplatform",
+    "publishers",
+    "d3dscache",
+    "comms",
+    "programs",
+    "placeholdertilelogofolder",
+    "virtualstore",
+    "windowsapps",
+];
+
+fn deep_skip(name: &str) -> bool {
+    DEEP_SKIP.contains(&name.to_lowercase().as_str())
+}
+
+/// The three AppData roots (Local, Roaming, LocalLow) that exist.
+pub fn deep_roots(env: &ScanEnv) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(l) = &env.local_app_data {
+        roots.push(l.clone());
+        if let Some(parent) = l.parent() {
+            roots.push(parent.join("LocalLow"));
+        }
+    }
+    if let Some(r) = &env.roaming_app_data {
+        roots.push(r.clone());
+    }
+    roots.retain(|p| p.is_dir());
+    roots.dedup();
+    roots
+}
+
+/// Measure per-app folders under AppData. Only ever started by an explicit user request. Report-only:
+/// entries are `AppData`, classified DO_NOT_TOUCH, so the cleanup action refuses them.
+pub fn run_deep_appdata_scan(
+    env: &ScanEnv,
+    opts: &ScanOptions,
+    cancel: &AtomicBool,
+    progress: &Mutex<ScanProgress>,
+) -> ScanResult {
+    let start = Instant::now();
+    let started_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let ctx = Ctx {
+        cancel,
+        deadline: start + opts.time_budget,
+        max_visited: opts.max_visited,
+        progress,
+        visited: AtomicUsize::new(0),
+        unreadable: AtomicUsize::new(0),
+        stopped: AtomicBool::new(false),
+        governor: opts.governor.clone(),
+        paused_ms: AtomicU64::new(0),
+    };
+    let mut entries: Vec<ScanEntry> = Vec::new();
+    let mut notes = vec![
+        "Deep scan: only per-app folders over 100 MB are listed. Windows and system folders are skipped.".to_string(),
+    ];
+
+    'roots: for root in deep_roots(env) {
+        let Ok(rd) = fs::read_dir(&root) else {
+            ctx.unreadable();
+            continue;
+        };
+        for entry in rd.flatten() {
+            if ctx.should_stop() {
+                break 'roots;
+            }
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(md) = fs::symlink_metadata(&path) else {
+                ctx.unreadable();
+                continue;
+            };
+            // Files, links and junctions are not app folders; system-owned folders are skipped.
+            if !md.is_dir()
+                || skip_entry(&md)
+                || deep_skip(&name)
+                || is_protected(&path, env.user_profile.as_deref())
+            {
+                continue;
+            }
+            if let Ok(mut p) = progress.lock() {
+                p.phase = "Deep scan of AppData".into();
+                p.current_path = path.to_string_lossy().into_owned();
+            }
+            let sizing = dir_size(&path, &ctx);
+            if sizing.bytes >= DEEP_MIN_BYTES {
+                entries.push(make_entry(&path, true, sizing, EntryKind::AppData));
+                if let Ok(mut p) = progress.lock() {
+                    p.entries_found = entries.len();
+                }
+            }
+            std::thread::sleep(DEEP_FOLDER_REST);
+        }
+    }
+
+    entries.sort_by_key(|e| std::cmp::Reverse(e.size_bytes));
+    entries.truncate(DEEP_MAX_ENTRIES);
+
+    let complete = !ctx.stopped.load(Ordering::Relaxed);
+    if !complete {
+        notes.push(if cancel.load(Ordering::Relaxed) {
+            "Deep scan was cancelled; results are partial.".to_string()
+        } else {
+            "Deep scan stopped at its time or size limit; results are partial.".to_string()
+        });
+    }
+    let unreadable = ctx.unreadable.load(Ordering::Relaxed);
+    if unreadable > 0 {
+        notes.push(format!("{unreadable} items could not be read."));
+    }
+    if let Ok(mut p) = progress.lock() {
+        p.phase = if complete {
+            "Done".into()
+        } else {
+            "Stopped".into()
+        };
+        p.entries_found = entries.len();
+        p.items_visited = ctx.visited.load(Ordering::Relaxed);
+    }
+    ScanResult {
+        started_at_ms,
+        duration_ms: start.elapsed().as_millis() as u64,
+        complete,
+        unreadable,
+        notes,
+        entries,
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,6 +840,289 @@ mod tests {
             apk_min_age_days: 0,
             ..Default::default()
         }
+    }
+
+    // --- governor: pause, resume, throttle ----------------------------------------------------
+
+    /// A project with a big node_modules, plus enough loose files that the walk passes several
+    /// governor checks (one every `CHECK_EVERY` entries).
+    fn busy_tree(root: &Path) -> ScanEnv {
+        let proj = root.join("p");
+        write(&proj.join("package.json"), 2);
+        for i in 0..40 {
+            write(
+                &proj
+                    .join("node_modules")
+                    .join(format!("pkg{i}"))
+                    .join("index.js"),
+                50,
+            );
+        }
+        for i in 0..900 {
+            write(&proj.join("src").join(format!("f{i}.ts")), 1);
+        }
+        ScanEnv {
+            dev_roots: vec![root.to_path_buf()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_paused_scan_waits_then_finishes_and_pause_time_is_not_charged_to_the_budget() {
+        use crate::storage::governor::{Gate, GovernorHandle};
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool as Flag;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let env = busy_tree(tmp.path());
+        let pause = Arc::new(Flag::new(true));
+        let p = pause.clone();
+        let opts = ScanOptions {
+            // A budget far shorter than the pause below.
+            time_budget: Duration::from_millis(1500),
+            governor: Some(GovernorHandle::new(move || {
+                if p.load(Ordering::SeqCst) {
+                    Gate::Pause("memory pressure is critical".into())
+                } else {
+                    Gate::Run
+                }
+            })),
+            ..small_opts()
+        };
+        let progress = Arc::new(Mutex::new(ScanProgress::default()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (e, o, pr, c) = (env.clone(), opts.clone(), progress.clone(), cancel.clone());
+        let handle = std::thread::spawn(move || run_scan(&e, &o, &c, &pr));
+
+        // While critical pressure lasts the scan reports why it is waiting.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let phase = progress.lock().unwrap().phase.clone();
+            if phase.starts_with("Paused:") {
+                assert!(phase.contains("memory pressure is critical"), "{phase}");
+                break;
+            }
+            assert!(Instant::now() < deadline, "never paused; phase = {phase}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Stay paused longer than the whole time budget, then let it continue.
+        std::thread::sleep(Duration::from_millis(2200));
+        assert!(!handle.is_finished(), "a paused scan makes no progress");
+        pause.store(false, Ordering::SeqCst);
+        let r = handle.join().unwrap();
+        assert!(
+            r.complete,
+            "pause time must not use up the budget: {:?}",
+            r.notes
+        );
+        assert!(find(&r, "node_modules").is_some());
+        assert_ne!(
+            progress.lock().unwrap().phase,
+            "Paused: memory pressure is critical"
+        );
+    }
+
+    #[test]
+    fn cancelling_a_paused_scan_ends_it_promptly_with_a_partial_result() {
+        use crate::storage::governor::{Gate, GovernorHandle};
+        use std::sync::Arc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let env = busy_tree(tmp.path());
+        let opts = ScanOptions {
+            governor: Some(GovernorHandle::new(|| {
+                Gate::Pause("a flutter build is running".into())
+            })),
+            ..small_opts()
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(Mutex::new(ScanProgress::default()));
+        let (e, o, pr, c) = (env, opts, progress.clone(), cancel.clone());
+        let handle = std::thread::spawn(move || run_scan(&e, &o, &c, &pr));
+        std::thread::sleep(Duration::from_millis(700));
+        let began = Instant::now();
+        cancel.store(true, Ordering::SeqCst);
+        let r = handle.join().unwrap();
+        assert!(
+            began.elapsed() < Duration::from_secs(3),
+            "cancel must not wait for the pause to end"
+        );
+        assert!(!r.complete);
+        assert!(r.notes.iter().any(|n| n.contains("cancelled")));
+    }
+
+    #[test]
+    fn throttling_slows_the_scan_but_does_not_change_what_it_finds() {
+        use crate::storage::governor::{Gate, GovernorHandle};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let env = busy_tree(tmp.path());
+        let free = scan(&env, &small_opts());
+        let throttled_opts = ScanOptions {
+            governor: Some(GovernorHandle::new(|| {
+                Gate::Throttle("memory pressure is high".into())
+            })),
+            ..small_opts()
+        };
+        let began = Instant::now();
+        let slow = scan(&env, &throttled_opts);
+        // ~1000 entries / 256 per check = a few checks of 15 ms each: measurable, never wrong.
+        assert!(
+            began.elapsed() >= Duration::from_millis(30),
+            "{:?}",
+            began.elapsed()
+        );
+        assert!(slow.complete);
+        let paths = |r: &ScanResult| {
+            r.entries
+                .iter()
+                .map(|e| (e.path.clone(), e.size_bytes))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths(&free), paths(&slow));
+    }
+
+    #[test]
+    fn without_a_governor_nothing_waits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = busy_tree(tmp.path());
+        let began = Instant::now();
+        assert!(scan(&env, &small_opts()).complete);
+        assert!(began.elapsed() < Duration::from_secs(2));
+    }
+
+    // --- deep AppData scan ---------------------------------------------------------------------
+
+    fn big_file(path: &Path, mib: u64) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::File::create(path).unwrap().set_len(mib * MIB).unwrap();
+    }
+
+    /// `<tmp>\AppData\{Local,Roaming,LocalLow}` with a few app folders.
+    fn appdata(root: &Path) -> ScanEnv {
+        let ad = root.join("AppData");
+        big_file(&ad.join("Local").join("Slack").join("cache.bin"), 150);
+        big_file(&ad.join("Local").join("TinyApp").join("x.bin"), 1);
+        big_file(
+            &ad.join("Local")
+                .join("Microsoft")
+                .join("Windows")
+                .join("big.bin"),
+            300,
+        );
+        big_file(
+            &ad.join("Local").join("Packages").join("p").join("big.bin"),
+            300,
+        );
+        big_file(
+            &ad.join("Roaming").join("Code").join("User").join("db.bin"),
+            120,
+        );
+        big_file(&ad.join("LocalLow").join("Game").join("save.bin"), 110);
+        big_file(&ad.join("Local").join("loose-file.bin"), 200);
+        ScanEnv {
+            user_profile: Some(root.to_path_buf()),
+            local_app_data: Some(ad.join("Local")),
+            roaming_app_data: Some(ad.join("Roaming")),
+            ..Default::default()
+        }
+    }
+
+    fn deep(env: &ScanEnv, opts: &ScanOptions) -> ScanResult {
+        run_deep_appdata_scan(
+            env,
+            opts,
+            &AtomicBool::new(false),
+            &Mutex::new(ScanProgress::default()),
+        )
+    }
+
+    #[test]
+    fn deep_scan_lists_big_app_folders_from_all_three_roots_and_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = appdata(tmp.path());
+        let r = deep(&env, &ScanOptions::default());
+        let names: Vec<&str> = r.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["Slack", "Code", "Game"],
+            "largest first, small and loose files left out"
+        );
+        assert!(r.complete);
+        for e in &r.entries {
+            assert_eq!(e.kind, EntryKind::AppData);
+            assert_eq!(
+                e.safety,
+                Safety::DoNotTouch,
+                "{} must be report-only",
+                e.name
+            );
+        }
+    }
+
+    #[test]
+    fn deep_scan_never_measures_windows_owned_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = appdata(tmp.path());
+        let r = deep(&env, &ScanOptions::default());
+        for skipped in ["Microsoft", "Packages", "Temp"] {
+            assert!(r.entries.iter().all(|e| e.name != skipped), "{skipped}");
+        }
+        assert!(
+            deep_skip("MICROSOFT") && deep_skip("packages"),
+            "case-insensitive"
+        );
+        assert!(!deep_skip("Slack"));
+    }
+
+    #[test]
+    fn deep_scan_is_read_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = appdata(tmp.path());
+        let before = walk_all(&tmp.path().join("AppData"));
+        deep(&env, &ScanOptions::default());
+        assert_eq!(before, walk_all(&tmp.path().join("AppData")));
+    }
+
+    #[test]
+    fn deep_scan_without_appdata_is_empty_not_an_error() {
+        let r = deep(&ScanEnv::default(), &ScanOptions::default());
+        assert!(r.entries.is_empty() && r.complete);
+    }
+
+    #[test]
+    fn a_paused_deep_scan_can_be_cancelled() {
+        use crate::storage::governor::{Gate, GovernorHandle};
+        use std::sync::Arc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        // Enough entries in one folder to reach a governor check.
+        let env = appdata(tmp.path());
+        for i in 0..600 {
+            write(
+                &tmp.path()
+                    .join("AppData")
+                    .join("Local")
+                    .join("Slack")
+                    .join(format!("f{i}")),
+                1,
+            );
+        }
+        let opts = ScanOptions {
+            governor: Some(GovernorHandle::new(|| {
+                Gate::Pause("memory pressure is critical".into())
+            })),
+            ..ScanOptions::default()
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(Mutex::new(ScanProgress::default()));
+        let (e, o, c, p) = (env, opts, cancel.clone(), progress.clone());
+        let handle = std::thread::spawn(move || run_deep_appdata_scan(&e, &o, &c, &p));
+        std::thread::sleep(Duration::from_millis(800));
+        assert!(progress.lock().unwrap().phase.starts_with("Paused:"));
+        cancel.store(true, Ordering::SeqCst);
+        let r = handle.join().unwrap();
+        assert!(!r.complete);
     }
 
     fn find<'a>(r: &'a ScanResult, suffix: &str) -> Option<&'a ScanEntry> {

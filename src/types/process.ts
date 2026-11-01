@@ -50,3 +50,24 @@ export interface ProcessList {
   matched: number;
   processes: ProcessInfo[];
 }
+
+export interface TreeNode {
+  pid: number;
+  name: string;
+  category: Category;
+  cpuPercent: number;
+  /** This process only. */
+  memoryBytes: number;
+  /** This process plus every descendant. */
+  subtreeBytes: number;
+  /** Descendants not shown (too small, or beyond the depth/size limit). */
+  hiddenChildren: number;
+  children: TreeNode[];
+}
+
+export interface ProcessTree {
+  roots: TreeNode[];
+  totalProcesses: number;
+  shownNodes: number;
+  truncated: boolean;
+}

@@ -93,7 +93,7 @@ describe("docker panel", () => {
       totalMemoryBytes: 900 * 1024 * 1024,
       containers: [{ id: "abc", name: "redis-idle", image: "redis:7", status: "Up", running: true, memoryBytes: 900 * 1024 * 1024, cpuPercent: 0.2, memoryLimitBytes: null }],
     });
-    ipc.on("preview_action", preview({ actionId: "docker.stop_container", title: "Stop container redis-idle", risk: "LOW", requiresConfirmation: false, requiresDoubleConfirmation: false, reversible: true, warnings: [], estimatedBenefitBytes: null }));
+    ipc.on("preview_action", preview({ actionId: "docker.stop_container", title: "Stop container redis-idle", risk: "LOW", requiresConfirmation: false, requiresDoubleConfirmation: false, reversible: true, reversibility: "REVERSIBLE", warnings: [], estimatedBenefitBytes: null }));
     const user = userEvent.setup();
     render(<ProcessesPage />);
     await user.click(await screen.findByRole("button", { name: "Stop redis-idle" }));

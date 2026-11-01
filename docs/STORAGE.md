@@ -38,3 +38,22 @@ Used by both the scanner and the delete action. Rejects relative paths, UNC path
 ## UI
 
 Overview (what could be recovered by class, by category), Largest folders, Largest files, Developer caches, Cleanup candidates. Sort by size, modified date or file count. Lists show 100 rows at a time ("Show more"). Every cleanup goes through the preview dialog.
+
+## Scans stay out of the way (`storage/governor.rs`)
+
+DevPilot must not become the source of pressure it reports, so every scan:
+
+- runs on its own thread in **background mode** (`THREAD_MODE_BACKGROUND_BEGIN`: low CPU, I/O and memory priority; the third audited `unsafe` call, `windows/priority.rs`);
+- asks a *governor* every 256 entries whether to continue, and sleeps 1 ms (normal) or 15 ms (throttled) between checks, so it never saturates the disk;
+- **pauses** while RAM pressure is CRITICAL, a performance incident is being recorded, or an Android, Gradle or Flutter build is running; it **throttles** while pressure is HIGH or any other build or startup session runs. It resumes by itself, the progress phase reads `Paused: <reason>`, time spent paused does not count against the time budget, and cancelling while paused ends the scan immediately with a partial result;
+- is never repeated automatically: a scan runs only when the user starts it.
+
+The decision is a pure function of conditions DevPilot already measures (pressure state, active build sessions, incident state), so checking costs nothing extra.
+
+## Deep scan of AppData (optional)
+
+Normal scans keep looking only at known developer locations. **Deep scan AppData** is a separate button on the Storage page that asks first ("this can take several minutes") and is never started by anything else (`start_deep_appdata_scan` is called from that button only).
+
+It measures the immediate sub-folders of `AppData\Local`, `LocalLow` and `Roaming` and lists those over 100 MB (60 at most). Windows-owned folders (`Microsoft`, `Packages`, `Temp`, `Programs`, `ConnectedDevicesPlatform`, `WindowsApps`, ...) are skipped, as are protected locations, links and junctions. It uses the same governor (plus a 25 ms rest between folders) and a 15 minute budget.
+
+It is **report-only**: its entries have kind `appData`, classified `DO_NOT_TOUCH`, so the cleanup action refuses them (a test asserts it), and the UI shows no delete button. Its result is kept apart from the normal result, which is the whitelist cleanup is checked against, so a deep scan never invalidates cleanup candidates. A deep and a normal scan never run at the same time.

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ReversibilityBadge } from "@/components/ActionResult";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,6 +56,7 @@ export function ActionsPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">{a.name}</span>
                   <Badge tone={RISK_TONE[a.riskLevel]}>{a.riskLevel}</Badge>
+                  <ReversibilityBadge value={a.reversibility} />
                   {a.reversible && <Badge tone="info">undoable</Badge>}
                   {a.automationEligible && <Badge tone="neutral">automation</Badge>}
                 </div>
@@ -79,7 +81,8 @@ export function ActionsPage() {
           <ul className="space-y-2">
             {history.data?.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center gap-2 text-sm">
-                <Badge tone={r.success ? "ok" : "danger"}>{r.success ? "done" : "failed"}</Badge>
+                <Badge tone={r.status === "SUCCESS" ? "ok" : r.status === "FAILED" ? "danger" : "warn"}>{{ SUCCESS: "verified", UNVERIFIED: "not verified", NOT_EFFECTIVE: "no visible effect", FAILED: "failed" }[r.status]}</Badge>
+                {r.success && <ReversibilityBadge value={r.reversibility} />}
                 <span className="font-medium">{r.name}</span>
                 {r.automated && <Badge>auto</Badge>}
                 <span className="text-muted-foreground">{r.summary}</span>

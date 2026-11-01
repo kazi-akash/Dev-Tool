@@ -1,2 +1,2 @@
-pub mod workloads;
 pub mod sessions;
+pub mod workloads;

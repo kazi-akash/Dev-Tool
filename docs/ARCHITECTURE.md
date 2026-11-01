@@ -18,7 +18,7 @@ Rust application core (src-tauri/src)
    ai/           optional gateway: sanitizer, payload builder, providers, key store
    database/     SQLite (SQLx) repository
    history/      background recorder + tiered aggregation
-   windows/      tray, window lifecycle, commit query (`memory.rs`) and PDH counters (`perf.rs`); the only `unsafe`
+   windows/      tray, window lifecycle, commit query (`memory.rs`), PDH counters (`perf.rs`), background thread priority (`priority.rs`); the only `unsafe`
    commands/     thin Tauri command layer (no logic)
 ```
 
@@ -45,3 +45,23 @@ Every subsystem degrades on its own: no Docker -> Docker panel says why; SQLite 
 - Rust types serialize as camelCase JSON; TypeScript mirrors live in `src/types/`.
 - Logic is pure and takes its inputs as parameters (time, environment, process lists), so it is unit-tested without the OS.
 - Side effects sit behind small traits (`CommandRunner`, `ProcessKiller`, `SecretStore`) and are faked in tests.
+
+## Tray quick status
+
+The tray menu's "System Status" opens a small undecorated popup (`windows/quick.rs`, window label `status`) in the bottom-right corner. It is the same bundle on route `#/quick-status`, rendered without the app shell or settings provider, and it exists only while open: it is destroyed on close and when it loses focus (a 600 ms grace ignores the initial blur).
+
+It adds no monitoring. `get_quick_status` derives RAM, CPU, the worst drive, a severity and a one-sentence diagnosis from the cached snapshot and the cached process list (no Docker CLI, no scan, no sampling). The sentence is the memory mechanism when RAM pressure is HIGH or worse, otherwise the worst drive, otherwise "No problems detected."
+
+Buttons: Open DevPilot, Run Diagnosis, Scan Storage, Settings, Quit. `quick_status_action` accepts exactly those five ids (anything else is rejected) and reuses the tray menu handler, so the popup can open pages and quit and nothing more. Its window has its own capability (`capabilities/status.json`: `get_quick_status` and `quick_status_action`, no events); a test asserts it shares no command with the main window. The tray tooltip (`DevPilot · RAM 87% · CPU 12%`) is refreshed every fifth sample.
+
+## Start with Windows
+
+Settings has a switch, **off unless the user turns it on**. It writes one value (`DevPilot`) to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`: per user, no administrator rights. The command is `"<path>\devpilot.exe" --minimized`.
+
+- The registry is the source of truth. The switch reads it (`get_start_with_windows`) and re-reads after every change, so it shows what Windows will really do. A value that points at another copy of DevPilot (moved, reinstalled) is shown with a "Use this copy instead" button.
+- The only writer is `set_start_with_windows`, called from that switch. Source tests assert that nothing else in the app (startup, tray, monitor, preferences, installer-time code) references the startup entry.
+- The main window has `create: false` in `tauri.conf.json`. A normal launch creates it in `setup`; `--minimized` does not, so only the tray, the monitor, incident recording, history and notifications start (no WebView, about 45 MB). A second launch carrying `--minimized` (autostart racing a manual start) does nothing; a manual second launch still shows the window.
+
+### Preferences owned by Rust (`prefs.rs`)
+
+The sampling interval, RAM and disk thresholds, safe automation and the notifications switch are persisted in `%APPDATA%\com.niduslab.devpilot\prefs.json` whenever they change, and applied in `setup` before monitoring starts. The UI still keeps its copy in localStorage and pushes it when the window opens, but a minimized start has no window, so without this file it would run on defaults (including toasts the user turned off). Values are validated again on load; a corrupt or hand-edited file changes nothing, and unchanged values do not rewrite the file.

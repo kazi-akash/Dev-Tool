@@ -97,3 +97,21 @@ export interface MemoryTelemetry {
   trend: Trend | null;
   mechanism: MemoryMechanism;
 }
+
+export interface QuickStatus {
+  ramPercent: number;
+  ramUsedBytes: number;
+  ramTotalBytes: number;
+  cpuPercent: number;
+  disk: { mountPoint: string; freeBytes: number; totalBytes: number; freePercent: number; hoursToFull: number | null } | null;
+  severity: "HEALTHY" | "ATTENTION" | "HIGH" | "CRITICAL";
+  headline: string;
+  incidentActive: boolean;
+}
+
+export interface AutostartStatus {
+  enabled: boolean;
+  /** The registered command starts this copy of DevPilot. */
+  pointsToThisApp: boolean;
+  command: string | null;
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-deep-appdata-scan"
+description = "Enables the start_deep_appdata_scan command without any pre-configured scope."
+commands.allow = ["start_deep_appdata_scan"]
+
+[[permission]]
+identifier = "deny-start-deep-appdata-scan"
+description = "Denies the start_deep_appdata_scan command without any pre-configured scope."
+commands.deny = ["start_deep_appdata_scan"]

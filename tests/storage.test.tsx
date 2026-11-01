@@ -100,7 +100,7 @@ describe("storage page", () => {
     const user = userEvent.setup();
     ipc.on("get_storage_scan", scanStatus(all));
     ipc.on("preview_action", preview());
-    ipc.on("execute_action", () => ({ id: 1, actionId: "cleanup.path", name: "Delete a scanned item", atMs: 1, risk: "DESTRUCTIVE", automated: false, success: true, summary: "Deleted and freed 6.4 GB.", freedBytes: 6.4 * GB, rolledBack: false, reversible: false }));
+    ipc.on("execute_action", () => ({ id: 1, actionId: "cleanup.path", name: "Delete a scanned item", atMs: 1, risk: "DESTRUCTIVE", automated: false, success: true, summary: "Deleted and freed 6.4 GB.", freedBytes: 6.4 * GB, rolledBack: false, reversible: false, reversibility: "IRREVERSIBLE", status: "SUCCESS", verification: { state: "VERIFIED", detail: "Confirmed." }, measurement: null }));
     render(<StoragePage />);
     await user.click(await screen.findByRole("tab", { name: "Cleanup candidates" }));
     await user.click(screen.getByRole("button", { name: /Review and delete node_modules/ }));
@@ -158,5 +158,74 @@ describe("storage page", () => {
     ipc.on("get_storage_scan", scanStatus(all, { result: { ...scanStatus(all).result!, complete: false, notes: ["Scan was cancelled; results are partial."] } }));
     render(<StoragePage />);
     expect(await screen.findByText(/results are partial/)).toBeInTheDocument();
+  });
+});
+
+describe("deep AppData scan", () => {
+  const slack = entry({ path: "C:/Users/a/AppData/Local/Slack", name: "Slack", kind: "appData", kindLabel: "Application data", safety: "DO_NOT_TOUCH", sizeBytes: 2.1 * GB, fileCount: 4000 });
+
+  it("is never started by a normal scan and asks before it starts", async () => {
+    const user = userEvent.setup();
+    ipc.on("get_storage_scan", scanStatus(all));
+    ipc.on("start_storage_scan", true);
+    ipc.on("start_deep_appdata_scan", true);
+    render(<StoragePage />);
+    await screen.findByText("Safe to clean");
+    await user.click(screen.getByRole("button", { name: "Scan again" }));
+    expect(ipc.calledWith("start_deep_appdata_scan")).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Deep scan AppData" }));
+    expect(screen.getByText("This can take several minutes.")).toBeInTheDocument();
+    expect(screen.getByText(/pauses while memory is critical/)).toBeInTheDocument();
+    expect(ipc.calledWith("start_deep_appdata_scan")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Not now" }));
+    expect(ipc.calledWith("start_deep_appdata_scan")).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Deep scan AppData" }));
+    await user.click(screen.getByRole("button", { name: "Start deep scan" }));
+    expect(ipc.calledWith("start_deep_appdata_scan")).toHaveLength(1);
+  });
+
+  it("lists app folders without any way to delete them", async () => {
+    ipc.on("get_storage_scan", scanStatus(all, { deepResult: { startedAtMs: 1, durationMs: 1000, complete: true, unreadable: 0, notes: ["Deep scan: only per-app folders over 100 MB are listed."], entries: [slack] } }));
+    render(<StoragePage />);
+    expect(await screen.findByText("Slack")).toBeInTheDocument();
+    expect(screen.getByText("2.1 GB")).toBeInTheDocument();
+    expect(screen.getByText(/DevPilot does not offer to delete application data/)).toBeInTheDocument();
+    const card = screen.getByText("Deep scan of AppData (optional)").closest("div")!.parentElement!;
+    expect(within(card).queryByRole("button", { name: /delete|clean|remove/i })).not.toBeInTheDocument();
+  });
+
+  it("shows when the scan is paused and offers to cancel it", async () => {
+    ipc.on("get_storage_scan", scanStatus(all, { running: true, deep: true, progress: { phase: "Paused: memory pressure is critical", currentPath: "C:/x", entriesFound: 0, itemsVisited: 5000 } }));
+    ipc.on("cancel_storage_scan", undefined);
+    render(<StoragePage />);
+    expect((await screen.findAllByText("Paused: memory pressure is critical")).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Deep scan AppData" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Cancel/ }).length).toBeGreaterThan(0);
+  });
+
+  it("a standard scan in progress disables starting a deep one", async () => {
+    ipc.on("get_storage_scan", scanStatus(all, { running: true, deep: false }));
+    render(<StoragePage />);
+    expect(await screen.findByRole("button", { name: "Deep scan AppData" })).toBeDisabled();
+  });
+});
+
+describe("storage table virtualization", () => {
+  it("keeps the DOM small however many rows were revealed", async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 600 }, (_, i) => entry({ path: `S:/p${i}/node_modules`, name: `node_modules_${i}`, sizeBytes: (700 - i) * 1024 * 1024, safety: "SAFE_TO_REVIEW", kind: "buildOutput", kindLabel: "Build output" }));
+    ipc.on("get_storage_scan", scanStatus(many));
+    render(<StoragePage />);
+    await user.click(await screen.findByRole("tab", { name: "Largest folders" }));
+    // 100 rows: all rendered.
+    expect(screen.getAllByRole("row")).toHaveLength(101);
+    for (let i = 0; i < 4; i++) await user.click(screen.getByRole("button", { name: /Show \d+ more/ }));
+    // 500 revealed, but only a window is in the DOM.
+    const rows = screen.getAllByRole("row").length;
+    expect(rows).toBeLessThan(60);
+    expect(screen.getByText("node_modules_0")).toBeInTheDocument();
+    expect(screen.queryByText("node_modules_300")).not.toBeInTheDocument();
   });
 });

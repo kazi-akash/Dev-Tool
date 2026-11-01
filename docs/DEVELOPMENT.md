@@ -13,7 +13,7 @@ pnpm tauri dev          # app with hot reload (Vite on :1420 + Rust)
 
 | What | Command | Notes |
 |------|---------|-------|
-| Rust unit + workflow | `cd src-tauri; cargo test` | ~280 tests; touches the real process table, Windows Credential Manager (unique service name), temp dirs, in-memory SQLite |
+| Rust unit + workflow | `cd src-tauri; cargo test` | ~435 tests (+1 ignored: `cargo test --lib real_toast -- --ignored` shows one real toast); touches the real process table, PDH counters, Windows Credential Manager (unique service name), a throwaway HKCU registry key, temp dirs, in-memory SQLite. The Recycle Bin, Docker, WSL and process killing are always faked |
 | Lint | `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` | must stay clean |
 | Frontend unit/UI | `pnpm test` | Vitest + happy-dom + Testing Library, Tauri bridge mocked in `tests/ipc-mock.ts` |
 | Types | `pnpm exec tsc --noEmit` | |

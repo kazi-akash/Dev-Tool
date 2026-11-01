@@ -20,7 +20,7 @@ Three things are treated as untrusted: the UI (it can be compromised by a bug), 
 
 ## `unsafe`
 
-`#![deny(unsafe_code)]` at the crate root. Exceptions are two small Windows modules, each item with a `SAFETY` note: `windows/memory.rs` (`GetPerformanceInfo`: zero-initialized, correctly sized struct, result checked) and `windows/perf.rs` (PDH: open query, add three English-named counters, collect, read as double, close). The PDH query handle is owned by the sampler thread only and never shared; every failure maps to `None`.
+`#![deny(unsafe_code)]` at the crate root. Exceptions are three small Windows modules, each item with a `SAFETY` note: `windows/memory.rs` (`GetPerformanceInfo`: zero-initialized, correctly sized struct, result checked) and `windows/perf.rs` (PDH: open query, add three English-named counters, collect, read as double, close). The PDH query handle is owned by the sampler thread only and never shared; every failure maps to `None`. `windows/priority.rs` makes two pointer-free calls (`GetCurrentThread`, `SetThreadPriority`) that put only the scan thread in background mode. Other new native-API users (`trash` for the Recycle Bin, `tauri-winrt-notification` for toasts, `winreg` for the startup entry) are dependencies with safe APIs; DevPilot adds no `unsafe` for them.
 
 ## Data at rest
 

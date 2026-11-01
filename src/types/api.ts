@@ -130,6 +130,7 @@ export type EntryKind =
   | "virtualDisk"
   | "userData"
   | "largeFile"
+  | "appData"
   | "unknown";
 
 export type Safety = "SAFE_TO_REVIEW" | "SAFE_TO_CLEAN" | "REQUIRES_REVIEW" | "DO_NOT_TOUCH";
@@ -167,6 +168,10 @@ export interface ScanStatus {
   running: boolean;
   progress: ScanProgress;
   result: ScanResult | null;
+  /** Latest optional deep AppData scan. Kept apart from `result`, which cleanup is checked against. */
+  deepResult: ScanResult | null;
+  /** The running (or last) scan is the deep AppData scan. */
+  deep: boolean;
   error: string | null;
 }
 
@@ -389,4 +394,33 @@ export interface DockerBreakdown {
   unattributedVmBytes: number | null;
   level: "ATTRIBUTED" | "PARTIAL" | "UNAVAILABLE";
   notes: string[];
+}
+
+// --- emergency recovery --------------------------------------------------------------------------
+export interface RecoveryStep {
+  id: string;
+  title: string;
+  why: string;
+  /** A reference only: running it goes through the normal preview, confirmation and verification. */
+  action: { actionId: string; params: Record<string, unknown>; label: string };
+  risk: "LOW" | "MEDIUM";
+  estimatedBytes: number | null;
+  estimateBasis: string;
+}
+
+export interface EmergencyReport {
+  ramUsedBytes: number;
+  ramTotalBytes: number;
+  ramPercent: number;
+  commitPercent: number | null;
+  diskActivePercent: number | null;
+  hardFaultsPerSec: number | null;
+  causes: { name: string; bytes: number }[];
+  causeSummary: string;
+  mechanism: string | null;
+  steps: RecoveryStep[];
+  estimatedRecoveryBytes: number | null;
+  recoveryNote: string;
+  incidentActive: boolean;
+  activeSessions: string[];
 }

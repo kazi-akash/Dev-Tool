@@ -164,3 +164,37 @@ Limits: command lines are redacted and capped at 300 characters, so a `build` ar
 Two measurements are kept apart and **never added**: *host memory* (what Windows charges to `vmmem`/`vmmemWSL` and the Docker Desktop processes; this is what reduces free RAM) and *container-reported memory* (`docker stats`, inside the VM, excluding page cache the VM still holds, sampled at a different moment).
 
 `get_docker_breakdown` returns host total, WSL2 VM, Desktop/backend, running containers (largest first; name, status, image, CPU, memory, explicit `--memory` limit from `docker inspect`, `null` when none was set), container-reported total and the VM remainder. The remainder is only computed when every running container reported memory and the total does not exceed the VM; otherwise the level is `PARTIAL` and a note says why. Docker missing or stopped gives `UNAVAILABLE`: host memory only, no per-container split. Unknown values are `null`, shown as "memory unavailable", never as 0.
+
+## Emergency recovery (`monitoring/emergency.rs`)
+
+Active only while RAM pressure is `CRITICAL`. `get_emergency_status` returns `None` otherwise and does not touch Docker; the UI banner (`EmergencyBanner`, shown on every page) only asks while the snapshot says critical.
+
+The report shows RAM, commit, disk activity and hard faults (unavailable counters say so), the mechanism sentence from telemetry, the largest workloads (at least 1 GiB or 10% of RAM) as likely contributors, whether an incident is recording, and active build sessions.
+
+Recovery steps are derived from measured facts only and are **references to registered actions**, least disruptive first: stop Gradle daemons (only if a daemon is running), stop idle containers (under 1% CPU, at least 50 MB, name validated, top 3), close the Android emulator process (never a system process), shut down WSL (when the VM holds at least 1 GiB). The combined estimate does not double count: WSL shutdown includes the container steps, so the larger of the two is used. Estimates are labelled with their basis ("container-reported", "host process memory") and called upper bounds.
+
+**Nothing executes from here.** A step opens the normal action dialog (preview, confirmation, execute, verify, measure) over the same command ACL. Two source-hygiene tests enforce this: the AI gateway has no reference to the action engine, command runner or process creation, and the emergency assessment contains no execution calls. AI output stays text.
+
+## Notifications (`monitoring/alerts.rs`, `notifier.rs`, `windows/toast.rs`)
+
+Windows toasts, decided by a pure policy and displayed through `tauri-winrt-notification` (no `unsafe` in DevPilot). A toast carries a short summary and one button (and a click on the toast does the same) that opens the app on a fixed route: "View diagnosis" `/diagnosis`, "View results" `/storage`, "View incident" `/history`, "View actions" `/actions`. The activation argument comes from outside the process, so it is checked against the route allow-list again; anything else falls back to the alert's own destination.
+
+| Condition | Level | Text |
+|-----------|-------|------|
+| memory escalating while HIGH | 1 | "Memory is climbing fast" with the rate and minutes to critical |
+| RAM CRITICAL | 2 | "RAM is critical (97%)" with the mechanism sentence or the largest workload |
+| RAM CRITICAL with heavy paging or commit exhaustion | 3 | "Memory exhaustion is slowing your PC" |
+| a drive CRITICAL | 2 | "Drive S:\ is almost full" with free space and time to full |
+| performance incident recorded | one-off | the incident's hedged diagnosis |
+| storage scan finished or stopped early | one-off | item count and size (partial result is said) |
+| action finished or failed | one-off | the action summary |
+
+De-duplication and cooldown: a condition is announced when **entered**, once. While it persists only a **higher level** interrupts (escalation bypasses the cooldown, once per level). It must be gone for 2 minutes before it counts as a new episode, and a new episode inside the cooldown (10 min memory, 60 min per drive) is suppressed unless it is worse than the last announcement. Results are unique per scan or action and spaced 5 s apart per kind. Scan and action results the user just triggered are skipped while the main window is visible and focused; automated runs and incidents always notify.
+
+The master switch (Settings, on by default) is enforced in Rust (`set_notifications_enabled`). "Send a test notification" shows a toast and reports a failure instead of hiding it. A build run from a build folder is not registered with Windows, so it borrows PowerShell's toast identity; an installed build uses the app identifier. One real toast can be checked by hand: `cargo test --lib real_toast -- --ignored`.
+
+## Process tree and long lists
+
+`get_process_tree` builds a parent/child tree from the cached process list on request (nothing is added to the sampler). It shows the largest subtrees only: at most 40 roots, 400 nodes and 8 levels, with subtrees under 20 MB left out and reported as "+N small". A parent is accepted only when it started no later than its child (Windows reuses PIDs), and cycles are cut. A node's total (Σ) is the sum of each process's own memory; shared pages count once per process. The Processes page has a List / Tree switch; the list stays the default and the tree is fetched only when selected.
+
+Process and storage tables render only a window of their rows once they exceed 100 (`useVirtualWindow`, fixed row heights, spacer rows keep the scrollbar honest), so thousands of rows never become thousands of DOM nodes. The backend caps (500 processes, paged storage results) stay in place as a safety limit.

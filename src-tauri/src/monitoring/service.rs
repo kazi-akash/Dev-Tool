@@ -10,8 +10,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use super::config::MonitorInterval;
 use super::disks::DiskEngine;
 use super::growth::GrowthTracker;
-use super::metrics::{DiskMetrics, SystemSnapshot, clamp_cpu, disk_metrics, memory_metrics};
 use super::incident::{IncidentRecorder, IncidentSample, NamedBytes};
+use super::metrics::{DiskMetrics, SystemSnapshot, clamp_cpu, disk_metrics, memory_metrics};
 use super::pressure::{PressureEngine, PressureInputs, PressureState, Trend};
 use super::telemetry::{TelemetryEngine, TelemetryInputs};
 use crate::processes::collector::ProcessCollector;
@@ -27,6 +27,8 @@ pub const EVENT_SYSTEM_METRICS: &str = "system-metrics";
 
 /// Disk lists change rarely and refreshing them touches the filesystem; sample every N ticks.
 const DISK_REFRESH_EVERY_TICKS: u64 = 5;
+/// The tray tooltip changes slowly; update it this often.
+const TOOLTIP_EVERY_TICKS: u64 = 5;
 
 /// Latest snapshot, shared between the sampler thread and IPC commands.
 #[derive(Default)]
@@ -39,6 +41,8 @@ pub struct MonitorState {
     pub telemetry: Mutex<TelemetryEngine>,
     pub incident: Mutex<IncidentRecorder>,
     pub sessions: Mutex<crate::developers::sessions::SessionTracker>,
+    /// Set once the app handle exists (toasts need it). Absent in tests and before startup.
+    pub notifier: std::sync::OnceLock<Arc<super::notifier::Notifier>>,
     /// Filled once the history database is open; the sampler records into it when present.
     pub history: crate::commands::history::HistorySlot,
     latest: RwLock<Option<SystemSnapshot>>,
@@ -183,7 +187,19 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
             history.sample(crate::history::sample_row(&snapshot, &workloads));
         }
         let sessions = record_sessions(&state, &snapshot, &workloads, &process_list, now_secs);
-        record_incident(&app, &state, &snapshot, &workloads, &process_list, sessions, now_secs);
+        record_incident(
+            &app,
+            &state,
+            &snapshot,
+            &workloads,
+            &process_list,
+            sessions,
+            now_secs,
+        );
+        if let Some(notifier) = state.notifier.get() {
+            let top = workloads.first().map(|w| (w.name.as_str(), w.memory_bytes));
+            notifier.evaluate_snapshot(&snapshot, top, snapshot.timestamp_ms);
+        }
         state.store(snapshot.clone());
 
         // Skip the IPC push while the window is hidden in the tray; the snapshot is still kept fresh.
@@ -193,6 +209,13 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
             .unwrap_or(false);
         if visible {
             let _ = app.emit(EVENT_SYSTEM_METRICS, &snapshot);
+        }
+
+        // Tooltip text is a few bytes; refresh it every few ticks, not every one.
+        if tick.is_multiple_of(TOOLTIP_EVERY_TICKS)
+            && let Some(tray) = app.tray_by_id("main")
+        {
+            let _ = tray.set_tooltip(Some(super::quick_status::tooltip(&snapshot)));
         }
 
         tick = tick.wrapping_add(1);
@@ -276,6 +299,16 @@ fn record_incident(
     }
     if let Some(summary) = finished {
         let _ = app.emit(EVENT_INCIDENT_FINISHED, &summary);
+        if let Some(n) = state.notifier.get() {
+            n.result(
+                &super::alerts::incident_alert(
+                    summary.start_ms,
+                    summary.duration_secs,
+                    &summary.diagnosis,
+                ),
+                summary.end_ms,
+            );
+        }
         if let Some(h) = state.history.get() {
             h.incident(summary);
         }

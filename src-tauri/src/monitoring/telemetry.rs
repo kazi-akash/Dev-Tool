@@ -321,7 +321,11 @@ mod tests {
         );
         assert_eq!(m.kind, MechanismKind::HeavyPaging);
         assert!(m.summary.contains("heavy paging"), "{}", m.summary);
-        assert!(m.summary.contains("Commit usage reached 98%"), "{}", m.summary);
+        assert!(
+            m.summary.contains("Commit usage reached 98%"),
+            "{}",
+            m.summary
+        );
         assert!(m.summary.contains("disk activity reached 100%"));
         assert!(m.paging && m.commit_exhausted && m.disk_saturated);
         assert!(m.confidence >= 0.85);
@@ -329,7 +333,13 @@ mod tests {
 
     #[test]
     fn paging_without_disk_or_commit_is_hedged() {
-        let m = classify(PressureState::High, 90.0, Some(70.0), Some(250.0), Some(30.0));
+        let m = classify(
+            PressureState::High,
+            90.0,
+            Some(70.0),
+            Some(250.0),
+            Some(30.0),
+        );
         assert_eq!(m.kind, MechanismKind::HeavyPaging);
         assert!(m.summary.contains("suggests"));
         assert!(m.confidence < 0.8);
@@ -350,7 +360,13 @@ mod tests {
 
     #[test]
     fn disk_saturation_without_paging_does_not_blame_memory() {
-        let m = classify(PressureState::High, 88.0, Some(60.0), Some(4.0), Some(100.0));
+        let m = classify(
+            PressureState::High,
+            88.0,
+            Some(60.0),
+            Some(4.0),
+            Some(100.0),
+        );
         assert_eq!(m.kind, MechanismKind::DiskSaturation);
         assert!(m.summary.contains("probably not caused by memory"));
         assert!(m.confidence <= 0.6);
@@ -408,6 +424,9 @@ mod tests {
         });
         assert_eq!(t.physical_used_bytes, 0);
         let j = serde_json::to_string(&t).unwrap();
-        assert!(j.contains("hardFaultsPerSec") && j.contains("\"kind\":\"NONE\""), "{j}");
+        assert!(
+            j.contains("hardFaultsPerSec") && j.contains("\"kind\":\"NONE\""),
+            "{j}"
+        );
     }
 }

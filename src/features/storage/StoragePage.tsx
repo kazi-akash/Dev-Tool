@@ -8,6 +8,8 @@ import { formatBytes, formatDate } from "@/lib/format";
 import { SAFETY_LABEL, SAFETY_TONE } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import type { ActionRecord, ScanEntry, ScanStatus } from "@/types/api";
+import { useVirtualWindow } from "@/hooks/useVirtualWindow";
+import { DeepScanCard } from "./DeepScanCard";
 import { isCandidate, overview, viewEntries, type SortKey, type ViewId } from "./views";
 
 const VIEWS: { id: ViewId; label: string }[] = [
@@ -25,6 +27,7 @@ const SORTS: { id: SortKey; label: string }[] = [
 ];
 
 const PAGE = 100;
+const ENTRY_ROW_HEIGHT = 56;
 
 interface Pending {
   actionId: string;
@@ -82,6 +85,15 @@ export function StoragePage() {
     void refresh();
   }
 
+  async function startDeep() {
+    try {
+      await call<boolean>("start_deep_appdata_scan");
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+    void refresh();
+  }
+
   async function cancel() {
     await call("cancel_storage_scan").catch(() => {});
     void refresh();
@@ -98,6 +110,9 @@ export function StoragePage() {
   const entries = (result?.entries ?? []).filter((e) => !removed.has(e.path));
   const ov = overview(entries);
   const rows = view === "overview" ? [] : viewEntries(entries, view, sort);
+  const visibleRows = rows.slice(0, shown);
+  // After a few "Show more" clicks the table can hold thousands of rows: render only a window of them.
+  const { ref: tableRef, range } = useVirtualWindow(visibleRows.length, { rowHeight: ENTRY_ROW_HEIGHT });
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -218,8 +233,9 @@ export function StoragePage() {
 
           {view !== "overview" && (
             <Card className="overflow-hidden">
+              <div ref={tableRef} className={visibleRows.length > 100 ? "max-h-[40rem] overflow-y-auto" : undefined}>
               <table className="w-full text-sm">
-                <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                <thead className="sticky top-0 z-10 border-b bg-muted text-left text-xs text-muted-foreground">
                   <tr>
                     <th className="px-4 py-2 font-medium">Item</th>
                     <th className="px-3 py-2 font-medium">Category</th>
@@ -231,9 +247,19 @@ export function StoragePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.slice(0, shown).map((e) => (
+                  {range.padTop > 0 && (
+                    <tr aria-hidden style={{ height: range.padTop }}>
+                      <td colSpan={7} />
+                    </tr>
+                  )}
+                  {visibleRows.slice(range.start, range.end).map((e) => (
                     <EntryRow key={e.path} e={e} onClean={() => setPending({ actionId: "cleanup.path", params: { path: e.path } })} />
                   ))}
+                  {range.padBottom > 0 && (
+                    <tr aria-hidden style={{ height: range.padBottom }}>
+                      <td colSpan={7} />
+                    </tr>
+                  )}
                   {rows.length === 0 && (
                     <tr>
                       <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
@@ -243,6 +269,7 @@ export function StoragePage() {
                   )}
                 </tbody>
               </table>
+              </div>
               {rows.length > shown && (
                 <div className="border-t p-2 text-center">
                   <Button size="sm" variant="ghost" onClick={() => setShown((n) => n + PAGE)}>
@@ -254,6 +281,8 @@ export function StoragePage() {
           )}
         </>
       )}
+
+      <DeepScanCard running={running && (status?.deep ?? false)} busy={running} phase={status?.progress.phase ?? ""} result={status?.deepResult ?? null} onStart={() => void startDeep()} onCancel={() => void cancel()} />
 
       {pending && <ActionDialog actionId={pending.actionId} params={pending.params} onClose={closeDialog} />}
     </div>
@@ -271,7 +300,7 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
 
 function EntryRow({ e, onClean }: { e: ScanEntry; onClean: () => void }) {
   return (
-    <tr className={cn("border-b last:border-0 hover:bg-accent/40")}>
+    <tr className={cn("border-b last:border-0 hover:bg-accent/40")} style={{ height: ENTRY_ROW_HEIGHT }}>
       <td className="max-w-[22rem] px-4 py-2">
         <div className="truncate font-medium" title={e.path}>
           {e.name}
