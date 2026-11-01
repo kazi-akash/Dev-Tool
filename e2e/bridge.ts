@@ -61,6 +61,8 @@ export function defaultMocks(): Record<string, unknown> {
     get_memory_growth: [],
     get_recent_diagnoses: { available: true, items: [] },
     get_recent_actions: { available: true, items: [] },
+    get_incidents: { available: true, items: [] },
+    get_incident_status: { active: false, sinceMs: null },
     get_history: { available: true, items: rows },
     get_processes: {
       total: 2,

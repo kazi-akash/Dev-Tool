@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::pressure::{PressureReport, PressureState, Trend};
 use crate::windows::memory::CommitInfo;
@@ -25,7 +25,7 @@ pub const COMMIT_EXHAUSTED: f32 = 95.0;
 pub const DISK_BUSY: f32 = 80.0;
 pub const DISK_SATURATED: f32 = 95.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MechanismKind {
     /// RAM is not under pressure.

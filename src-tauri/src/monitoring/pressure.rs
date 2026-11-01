@@ -6,7 +6,7 @@
 
 use std::collections::VecDeque;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 /// Dropping to a lower state requires going this many points below the threshold (anti-flapping).
@@ -21,7 +21,7 @@ const MIN_TREND_SPAN_SECS: f64 = 60.0;
 const RISING_RATE: f32 = 0.5;
 const ESCALATING_RATE: f32 = 2.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PressureState {
     Normal,

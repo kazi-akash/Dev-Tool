@@ -18,7 +18,7 @@ Rust application core (src-tauri/src)
    ai/           optional gateway: sanitizer, payload builder, providers, key store
    database/     SQLite (SQLx) repository
    history/      background recorder + tiered aggregation
-   windows/      tray, window lifecycle, commit/pagefile query (the only `unsafe`)
+   windows/      tray, window lifecycle, commit query (`memory.rs`) and PDH counters (`perf.rs`); the only `unsafe`
    commands/     thin Tauri command layer (no logic)
 ```
 

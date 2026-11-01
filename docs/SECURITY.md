@@ -20,7 +20,7 @@ Three things are treated as untrusted: the UI (it can be compromised by a bug), 
 
 ## `unsafe`
 
-`#![deny(unsafe_code)]` at the crate root. The single exception is one Windows API call (`GetPerformanceInfo`) in `windows/memory.rs` with a `SAFETY` note: a zero-initialized, correctly sized struct is passed and the result checked.
+`#![deny(unsafe_code)]` at the crate root. Exceptions are two small Windows modules, each item with a `SAFETY` note: `windows/memory.rs` (`GetPerformanceInfo`: zero-initialized, correctly sized struct, result checked) and `windows/perf.rs` (PDH: open query, add three English-named counters, collect, read as double, close). The PDH query handle is owned by the sampler thread only and never shared; every failure maps to `None`.
 
 ## Data at rest
 

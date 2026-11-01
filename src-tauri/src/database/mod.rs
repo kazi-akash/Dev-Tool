@@ -8,6 +8,7 @@ use serde::Serialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Row as _, SqlitePool};
 
+use crate::monitoring::incident::IncidentSummary;
 use crate::history::aggregate::{
     BUCKET_1H, BUCKET_1M, BUCKET_5M, DiskPoint, EVENTS_KEEP_MS, HOUR_KEEP_MS, MIN1_KEEP_MS,
     MIN5_KEEP_MS, RAW_KEEP_MS, Row, TopPoint, bucket_for_range, cutoff, merge,
@@ -216,6 +217,11 @@ impl Database {
             .execute(&self.pool)
             .await
             .map_err(err)?;
+        sqlx::query("DELETE FROM incidents WHERE start_ms < ?")
+            .bind(events_cut)
+            .execute(&self.pool)
+            .await
+            .map_err(err)?;
         sqlx::query("DELETE FROM action_log WHERE ts_ms < ?")
             .bind(events_cut)
             .execute(&self.pool)
@@ -319,6 +325,52 @@ impl Database {
             .collect())
     }
 
+
+    // --- incidents -------------------------------------------------------------------------------
+
+    /// Store an incident summary; returns its id. The full summary is kept as JSON, the columns
+    /// exist for listing and pruning.
+    pub async fn insert_incident(&self, s: &IncidentSummary) -> Result<i64, String> {
+        let json = serde_json::to_string(s).map_err(err)?;
+        let mechanism = serde_json::to_value(s.mechanism)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        let res = sqlx::query(
+            "INSERT INTO incidents (start_ms, end_ms, duration_secs, peak_ram_percent, mechanism, confidence, diagnosis, summary_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(s.start_ms as i64)
+        .bind(s.end_ms as i64)
+        .bind(s.duration_secs as i64)
+        .bind(s.peak_ram_percent as f64)
+        .bind(mechanism)
+        .bind(s.confidence as f64)
+        .bind(&s.diagnosis)
+        .bind(json)
+        .execute(&self.pool)
+        .await
+        .map_err(err)?;
+        Ok(res.last_insert_rowid())
+    }
+
+    /// Newest first. Rows whose JSON no longer parses (older schema) are skipped, not fatal.
+    pub async fn recent_incidents(&self, limit: i64) -> Result<Vec<IncidentSummary>, String> {
+        let rows = sqlx::query("SELECT id, summary_json FROM incidents ORDER BY start_ms DESC, id DESC LIMIT ?")
+            .bind(limit.clamp(1, 200))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(err)?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let mut s: IncidentSummary =
+                    serde_json::from_str(&r.get::<String, _>("summary_json")).ok()?;
+                s.id = r.get("id");
+                Some(s)
+            })
+            .collect())
+    }
     // --- actions ---------------------------------------------------------------------------------
 
     pub async fn insert_action(&self, a: &StoredAction) -> Result<(), String> {
@@ -665,5 +717,42 @@ mod tests {
         let blocker = dir.path().join("file.txt");
         std::fs::write(&blocker, b"x").unwrap();
         assert!(Database::open(&blocker.join("devpilot.db")).await.is_err());
+    }
+}
+
+#[cfg(test)]
+mod incident_tests {
+    use super::*;
+    use crate::monitoring::incident::summarize;
+
+    #[tokio::test]
+    async fn incident_round_trips_and_lists_newest_first() {
+        let db = Database::memory().await.unwrap();
+        let mk = |ts: u64| {
+            let mut s = summarize(vec![], vec!["RAM above the critical threshold"]);
+            s.start_ms = ts;
+            s.end_ms = ts + 1000;
+            s.diagnosis = format!("incident at {ts}");
+            s
+        };
+        let id1 = db.insert_incident(&mk(1_000)).await.unwrap();
+        let id2 = db.insert_incident(&mk(5_000)).await.unwrap();
+        assert!(id2 > id1);
+        let list = db.recent_incidents(10).await.unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].start_ms, 5_000);
+        assert_eq!(list[0].id, id2);
+        assert_eq!(list[1].diagnosis, "incident at 1000");
+        assert_eq!(list[1].triggers, vec!["RAM above the critical threshold"]);
+    }
+
+    #[tokio::test]
+    async fn old_incidents_are_pruned_by_rollup() {
+        let db = Database::memory().await.unwrap();
+        let mut s = summarize(vec![], vec![]);
+        s.start_ms = 1;
+        db.insert_incident(&s).await.unwrap();
+        db.rollup(EVENTS_KEEP_MS + 10_000_000).await.unwrap();
+        assert!(db.recent_incidents(10).await.unwrap().is_empty());
     }
 }

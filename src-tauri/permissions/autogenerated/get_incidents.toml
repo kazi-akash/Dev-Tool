@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-incidents"
+description = "Enables the get_incidents command without any pre-configured scope."
+commands.allow = ["get_incidents"]
+
+[[permission]]
+identifier = "deny-get-incidents"
+description = "Denies the get_incidents command without any pre-configured scope."
+commands.deny = ["get_incidents"]

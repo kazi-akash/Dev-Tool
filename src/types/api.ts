@@ -285,3 +285,32 @@ export interface AiPayload {
   diagnosisStatus: string;
   findings: unknown[];
 }
+
+// --- performance incidents ---------------------------------------------------------------------
+export interface IncidentContributor {
+  name: string;
+  bytes: number;
+}
+
+export interface IncidentSummary {
+  id: number;
+  startMs: number;
+  endMs: number;
+  durationSecs: number;
+  triggers: string[];
+  peakRamPercent: number;
+  peakRamUsedBytes: number;
+  minAvailableBytes: number;
+  peakCommitBytes: number | null;
+  peakCommitPercent: number | null;
+  peakPagefilePercent: number | null;
+  peakHardFaultsPerSec: number | null;
+  peakDiskPercent: number | null;
+  peakCpuPercent: number;
+  contributors: IncidentContributor[];
+  sessions: string[];
+  mechanism: "NONE" | "HIGH_RAM_STABLE" | "HEAVY_PAGING" | "COMMIT_EXHAUSTION" | "DISK_SATURATION";
+  confidence: number;
+  diagnosis: string;
+  evidence: string[];
+}

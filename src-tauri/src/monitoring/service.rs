@@ -11,7 +11,8 @@ use super::config::MonitorInterval;
 use super::disks::DiskEngine;
 use super::growth::GrowthTracker;
 use super::metrics::{DiskMetrics, SystemSnapshot, clamp_cpu, disk_metrics, memory_metrics};
-use super::pressure::{PressureEngine, PressureInputs};
+use super::incident::{IncidentRecorder, IncidentSample, NamedBytes};
+use super::pressure::{PressureEngine, PressureInputs, PressureState, Trend};
 use super::telemetry::{TelemetryEngine, TelemetryInputs};
 use crate::processes::collector::ProcessCollector;
 use crate::processes::store::ProcessStore;
@@ -36,6 +37,7 @@ pub struct MonitorState {
     pub disks: Mutex<DiskEngine>,
     pub growth: Mutex<GrowthTracker>,
     pub telemetry: Mutex<TelemetryEngine>,
+    pub incident: Mutex<IncidentRecorder>,
     /// Filled once the history database is open; the sampler records into it when present.
     pub history: crate::commands::history::HistorySlot,
     latest: RwLock<Option<SystemSnapshot>>,
@@ -175,10 +177,11 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
             uptime_secs: System::uptime().unwrap_or(0),
             process_count: sys.processes().len(),
         };
+        let workloads = crate::developers::workloads::detect_workloads(&process_list);
         if let Some(history) = state.history.get() {
-            let workloads = crate::developers::workloads::detect_workloads(&process_list);
             history.sample(crate::history::sample_row(&snapshot, &workloads));
         }
+        record_incident(&app, &state, &snapshot, &workloads, &process_list, now_secs);
         state.store(snapshot.clone());
 
         // Skip the IPC push while the window is hidden in the tray; the snapshot is still kept fresh.
@@ -192,5 +195,86 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
 
         tick = tick.wrapping_add(1);
         thread::sleep(state.interval.get());
+    }
+}
+
+pub const EVENT_INCIDENT_STARTED: &str = "incident-started";
+pub const EVENT_INCIDENT_FINISHED: &str = "incident-finished";
+
+/// Build the recorder's view of this tick: counters, top processes, workload and Docker/WSL state.
+pub fn incident_sample(
+    snapshot: &SystemSnapshot,
+    workloads: &[crate::developers::workloads::Workload],
+    processes: &[crate::processes::model::ProcessInfo],
+    sessions: Vec<String>,
+) -> IncidentSample {
+    let t = snapshot.telemetry.as_ref();
+    let mut top: Vec<&crate::processes::model::ProcessInfo> = processes.iter().collect();
+    top.sort_by_key(|p| std::cmp::Reverse(p.memory_bytes));
+    IncidentSample {
+        ts_ms: snapshot.timestamp_ms,
+        ram_percent: snapshot.memory.percent,
+        available_bytes: snapshot.memory.available_bytes,
+        used_bytes: snapshot.memory.used_bytes,
+        commit_bytes: t.and_then(|t| t.commit_bytes),
+        commit_percent: t.and_then(|t| t.commit_percent),
+        pagefile_percent: t.and_then(|t| t.pagefile_usage_percent),
+        hard_faults_per_sec: t.and_then(|t| t.hard_faults_per_sec),
+        cpu_percent: snapshot.cpu_percent,
+        disk_active_percent: t.and_then(|t| t.disk_active_percent),
+        pressure: snapshot
+            .pressure
+            .as_ref()
+            .map_or(PressureState::Normal, |p| p.state),
+        top_processes: top
+            .into_iter()
+            .take(5)
+            .map(|p| NamedBytes {
+                name: p.name.clone(),
+                bytes: p.memory_bytes,
+            })
+            .collect(),
+        workloads: workloads
+            .iter()
+            .map(|w| NamedBytes {
+                name: w.name.clone(),
+                bytes: w.memory_bytes,
+            })
+            .collect(),
+        docker_wsl_bytes: workloads
+            .iter()
+            .find(|w| matches!(w.kind, crate::developers::workloads::WorkloadKind::Docker))
+            .map(|w| w.memory_bytes),
+        active_sessions: sessions,
+    }
+}
+
+fn record_incident(
+    app: &AppHandle,
+    state: &MonitorState,
+    snapshot: &SystemSnapshot,
+    workloads: &[crate::developers::workloads::Workload],
+    processes: &[crate::processes::model::ProcessInfo],
+    now_secs: f64,
+) {
+    let sample = incident_sample(snapshot, workloads, processes, Vec::new());
+    let escalating = snapshot
+        .pressure
+        .as_ref()
+        .is_some_and(|p| p.trend == Trend::Escalating);
+    let (was_active, finished, is_active) = {
+        let mut rec = lock(&state.incident);
+        let was = rec.is_active();
+        let done = rec.observe(now_secs, sample, escalating);
+        (was, done, rec.is_active())
+    };
+    if !was_active && is_active {
+        let _ = app.emit(EVENT_INCIDENT_STARTED, snapshot.timestamp_ms);
+    }
+    if let Some(summary) = finished {
+        let _ = app.emit(EVENT_INCIDENT_FINISHED, &summary);
+        if let Some(h) = state.history.get() {
+            h.incident(summary);
+        }
     }
 }

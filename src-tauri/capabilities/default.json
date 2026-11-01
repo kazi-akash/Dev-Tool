@@ -37,6 +37,8 @@
                         "allow-get-history",
                         "allow-get-recent-diagnoses",
                         "allow-get-recent-actions",
+                        "allow-get-incidents",
+                        "allow-get-incident-status",
                         "allow-take-pending-route"
                     ]
 }

@@ -32,6 +32,8 @@ const COMMANDS: &[&str] = &[
     "get_history",
     "get_recent_diagnoses",
     "get_recent_actions",
+    "get_incidents",
+    "get_incident_status",
     "take_pending_route",
 ];
 

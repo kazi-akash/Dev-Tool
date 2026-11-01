@@ -75,3 +75,36 @@ pub async fn get_recent_actions(
         items: h.db().recent_actions(limit.unwrap_or(50)).await?,
     })
 }
+
+#[tauri::command]
+pub async fn get_incidents(
+    slot: State<'_, HistorySlot>,
+    limit: Option<i64>,
+) -> Result<HistoryResponse<crate::monitoring::incident::IncidentSummary>, String> {
+    let Some(h) = slot.get() else {
+        return Ok(unavailable());
+    };
+    Ok(HistoryResponse {
+        available: true,
+        items: h.db().recent_incidents(limit.unwrap_or(20)).await?,
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncidentStatus {
+    pub active: bool,
+    pub since_ms: Option<u64>,
+}
+
+/// Whether an incident is being recorded right now (cheap; reads the recorder only).
+#[tauri::command]
+pub fn get_incident_status(
+    monitor: State<'_, Arc<crate::monitoring::service::MonitorState>>,
+) -> IncidentStatus {
+    let rec = crate::monitoring::service::lock(&monitor.incident);
+    IncidentStatus {
+        active: rec.is_active(),
+        since_ms: rec.active_since_ms(),
+    }
+}

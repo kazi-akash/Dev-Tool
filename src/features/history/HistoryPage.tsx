@@ -7,7 +7,8 @@ import { useAsync } from "@/hooks/useAsync";
 import { call } from "@/lib/ipc";
 import { formatBytes, formatDateTime, timeAgo } from "@/lib/format";
 import { SEVERITY_TONE } from "@/lib/status";
-import type { HistoryResponse, HistoryRow, StoredAction, StoredDiagnosis } from "@/types/api";
+import type { HistoryResponse, HistoryRow, IncidentSummary, StoredAction, StoredDiagnosis } from "@/types/api";
+import { IncidentList } from "./IncidentList";
 import { chartData, RANGES, tickLabel } from "./series";
 
 const AXIS = { fontSize: 11, fill: "var(--muted-foreground)" };
@@ -18,6 +19,7 @@ export default function HistoryPage() {
   const hist = useAsync(() => call<HistoryResponse<HistoryRow>>("get_history", { rangeSecs: range.secs }), { intervalMs: 30_000, deps: [range.secs] });
   const diags = useAsync(() => call<HistoryResponse<StoredDiagnosis>>("get_recent_diagnoses", { limit: 15 }), { intervalMs: 60_000 });
   const acts = useAsync(() => call<HistoryResponse<StoredAction>>("get_recent_actions", { limit: 15 }), { intervalMs: 60_000 });
+  const incidents = useAsync(() => call<HistoryResponse<IncidentSummary>>("get_incidents", { limit: 10 }), { intervalMs: 60_000 });
 
   const rows = hist.data?.items ?? [];
   const { points, drives } = useMemo(() => chartData(rows), [rows]);
@@ -102,6 +104,8 @@ export default function HistoryPage() {
           )}
         </>
       )}
+
+      <IncidentList items={incidents.data?.items} available={incidents.data?.available ?? true} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

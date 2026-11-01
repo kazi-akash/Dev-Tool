@@ -102,3 +102,41 @@ File: `%APPDATA%\com.niduslab.devpilot\devpilot.db`. If it cannot be opened, his
 | Window closed (tray) | ~0.10% | ~41 MB (`devpilot.exe` only) |
 
 WebView2 itself dominates the open-window figure; destroying the WebView on close is what brings the resident footprint under the 150 MB target.
+
+## Memory telemetry and mechanism (`monitoring/telemetry.rs`, `windows/perf.rs`)
+
+RAM percentage cannot say why a PC is slow, so each sample also carries `telemetry` (`SystemSnapshot.telemetry`):
+
+| Field | Source |
+|-------|--------|
+| physical total / available / used | sysinfo |
+| commit bytes, limit, percent | `GetPerformanceInfo` |
+| pagefile usage % | PDH `\Paging File(_Total)\% Usage` |
+| pagefile estimate % | commit above RAM (fallback; labelled "estimate") |
+| hard faults/sec | PDH `\Memory\Pages Input/sec` (pages read from disk), averaged over 5 samples |
+| disk active % | 100 - PDH `\PhysicalDisk(_Total)\% Idle Time`, averaged over 5 samples |
+
+Counters use English paths (`PdhAddEnglishCounterW`), so they work on any display language. Rate counters need two collections: the first sample is `None`. **`None` means unknown, never zero**; the UI says "unavailable" and confidence drops 0.1 per missing signal.
+
+Mechanism (only when pressure is HIGH or CRITICAL):
+
+| Kind | Evidence |
+|------|----------|
+| `HEAVY_PAGING` | hard faults >= 100/s together with disk >= 80% or commit >= 90% (0.7 confidence when paging is the only sign) |
+| `COMMIT_EXHAUSTION` | commit >= 95%, no paging |
+| `DISK_SATURATION` | disk >= 95% but paging low: the diagnosis says memory is probably not the cause |
+| `HIGH_RAM_STABLE` | none of the above: "high but stable" |
+
+The diagnosis `memory-pressure` leads with the mechanism sentence and appends the counter evidence. Wording stays hedged ("appears", "suggests").
+
+## Performance incidents (`monitoring/incident.rs`)
+
+Pure state machine fed once per sample. A rolling 30 s pre-buffer is always kept. An incident starts when a trigger holds for 3 s (RAM above the critical threshold, commit >= 95%, smoothed hard faults >= 500 pages/s, or HIGH pressure that is escalating). **Disk saturation alone (>= 95%) needs 15 s**, because builds and scans saturate disks without any memory problem.
+
+Recording continues until nothing has triggered for 60 s (a recurrence inside that window extends the same incident) or 15 minutes pass. A 30 s cooldown follows. At most 1200 samples are held per incident; the oldest after the pre-incident context are dropped first.
+
+Each sample records RAM, available RAM, commit, pagefile, hard faults, CPU, disk activity, top 5 processes, workload memory, Docker/WSL2 memory and active build sessions (empty until the session tracker exists).
+
+The summary (SQLite `incidents`, 90 days) holds peaks, triggers, contributors (peak memory per workload, never summed across samples), a mechanism classified from the *peak* values, a hedged diagnosis, confidence, evidence and a 120-point timeline. Missing counters lower confidence and the text says the cause could not be determined.
+
+IPC: `get_incidents(limit)`, `get_incident_status`. Events: `incident-started`, `incident-finished` (summary). The History page lists incidents.

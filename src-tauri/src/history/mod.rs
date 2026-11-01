@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use crate::database::{Database, StoredAction, StoredDiagnosis};
 use crate::developers::workloads::Workload;
 use crate::monitoring::metrics::SystemSnapshot;
+use crate::monitoring::incident::IncidentSummary;
 use aggregate::{DiskPoint, Row, TopPoint};
 
 const FLUSH_EVERY: Duration = Duration::from_secs(10);
@@ -22,6 +23,7 @@ enum Msg {
     Sample(Row),
     Diagnosis(StoredDiagnosis),
     Action(StoredAction),
+    Incident(IncidentSummary),
 }
 
 #[derive(Clone)]
@@ -37,6 +39,10 @@ impl HistoryHandle {
 
     pub fn diagnosis(&self, d: StoredDiagnosis) {
         let _ = self.tx.send(Msg::Diagnosis(d));
+    }
+
+    pub fn incident(&self, s: IncidentSummary) {
+        let _ = self.tx.send(Msg::Incident(s));
     }
 
     pub fn action(&self, a: StoredAction) {
@@ -141,6 +147,7 @@ pub fn start(db: Database) -> HistoryHandle {
                     }
                     Some(Msg::Diagnosis(d)) => { let _ = db.record_diagnosis(&d).await; }
                     Some(Msg::Action(a)) => { let _ = db.insert_action(&a).await; }
+                    Some(Msg::Incident(s)) => { let _ = db.insert_incident(&s).await; }
                     None => {
                         let _ = db.insert_raw(&buffer).await;
                         return;
@@ -232,7 +239,7 @@ mod tests {
             match m {
                 Msg::Sample(r) => buf.push(r),
                 Msg::Action(a) => db.insert_action(&a).await.unwrap(),
-                Msg::Diagnosis(_) => {}
+                Msg::Diagnosis(_) | Msg::Incident(_) => {}
             }
         }
         db.insert_raw(&buf).await.unwrap();

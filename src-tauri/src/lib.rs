@@ -1,4 +1,4 @@
-// The only `unsafe` is one audited Windows API call in `windows/memory.rs`.
+// `unsafe` is confined to two audited Windows modules: `windows/memory.rs` and `windows/perf.rs`.
 #![deny(unsafe_code)]
 
 mod actions;
@@ -119,6 +119,8 @@ pub fn run() {
             commands::history::get_history,
             commands::history::get_recent_diagnoses,
             commands::history::get_recent_actions,
+            commands::history::get_incidents,
+            commands::history::get_incident_status,
             commands::window::take_pending_route,
         ])
         .setup(|app| {
