@@ -244,6 +244,7 @@ mod tests {
             disks: vec![d.clone()],
             disk_health: vec![h.clone()],
             pressure: Some(pressure.clone()),
+            telemetry: None,
             uptime_secs: 10,
             process_count: 2,
         };
@@ -258,6 +259,7 @@ mod tests {
                 disk_health: &[h],
                 docker: None,
                 storage: None,
+                telemetry: None,
             },
             &Config::default(),
             1,

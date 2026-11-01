@@ -59,6 +59,7 @@ mod tests {
         health: Vec<DiskReport>,
         docker: Option<DockerStatus>,
         storage: Option<Vec<ScanEntry>>,
+        telemetry: Option<crate::monitoring::telemetry::MemoryTelemetry>,
     }
 
     impl World {
@@ -86,6 +87,7 @@ mod tests {
                 health: vec![],
                 docker: None,
                 storage: None,
+                telemetry: None,
             };
             w.set_disk("C:\\", 500.0, 250.0);
             w
@@ -108,6 +110,7 @@ mod tests {
                 disk_health: &self.health,
                 docker: self.docker.as_ref(),
                 storage: self.storage.as_deref(),
+                telemetry: self.telemetry.as_ref(),
             };
             diagnose(&input, &Config::default(), 123)
         }
@@ -217,6 +220,51 @@ mod tests {
         assert_eq!(r.headline.rule_id, "healthy");
         assert_eq!(r.findings.len(), 1);
         assert!(r.headline.summary.contains("RAM is at 40%"));
+    }
+
+    fn telemetry_for(
+        w: &World,
+        commit: f32,
+        faults: f32,
+        disk: f32,
+    ) -> crate::monitoring::telemetry::MemoryTelemetry {
+        use crate::monitoring::telemetry::{TelemetryEngine, TelemetryInputs};
+        use crate::windows::perf::PerfSample;
+        let perf = PerfSample {
+            hard_faults_per_sec: Some(faults),
+            pagefile_usage_percent: Some(80.0),
+            disk_active_percent: Some(disk),
+        };
+        let commit_info = crate::windows::memory::CommitInfo {
+            commit_total: (commit as f64 / 100.0 * (24 * GIB) as f64) as u64,
+            commit_limit: 24 * GIB,
+            physical_total: 16 * GIB,
+        };
+        TelemetryEngine::default().update(TelemetryInputs {
+            total_bytes: 16 * GIB,
+            available_bytes: w.memory.available_bytes,
+            commit: Some(commit_info),
+            perf,
+            pressure: &w.pressure,
+        })
+    }
+
+    #[test]
+    fn pressure_explains_paging_mechanism_when_telemetry_shows_it() {
+        let mut w = World::new(96.0, vec![]);
+        w.telemetry = Some(telemetry_for(&w, 98.0, 900.0, 100.0));
+        let d = w.run().headline;
+        assert_eq!(d.rule_id, "memory-pressure");
+        assert!(d.summary.contains("heavy paging"), "{}", d.summary);
+        assert!(d.evidence.iter().any(|e| e.contains("hard faults")));
+        assert!(!d.summary.contains("definitely"));
+    }
+
+    #[test]
+    fn pressure_without_telemetry_keeps_plain_wording() {
+        let w = World::new(96.0, vec![]);
+        let d = w.run().headline;
+        assert!(d.summary.starts_with("RAM is at 96%."), "{}", d.summary);
     }
 
     #[test]

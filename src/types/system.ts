@@ -53,6 +53,7 @@ export interface SystemSnapshot {
   disks: DiskMetrics[];
   diskHealth: DiskReport[];
   pressure: PressureReport | null;
+  telemetry: MemoryTelemetry | null;
   uptimeSecs: number;
   processCount: number;
 }
@@ -67,4 +68,32 @@ export interface DiskThresholds {
   warningFree: number;
   highFree: number;
   criticalFree: number;
+}
+
+export type MechanismKind = "NONE" | "HIGH_RAM_STABLE" | "HEAVY_PAGING" | "COMMIT_EXHAUSTION" | "DISK_SATURATION";
+
+export interface MemoryMechanism {
+  kind: MechanismKind;
+  confidence: number;
+  paging: boolean;
+  commitExhausted: boolean;
+  diskSaturated: boolean;
+  summary: string;
+  evidence: string[];
+}
+
+/** Any counter may be null when Windows could not provide it. Null is "unknown", never zero. */
+export interface MemoryTelemetry {
+  physicalTotalBytes: number;
+  physicalAvailableBytes: number;
+  physicalUsedBytes: number;
+  commitBytes: number | null;
+  commitLimitBytes: number | null;
+  commitPercent: number | null;
+  pagefileUsagePercent: number | null;
+  pagefileEstimatePercent: number | null;
+  hardFaultsPerSec: number | null;
+  diskActivePercent: number | null;
+  trend: Trend | null;
+  mechanism: MemoryMechanism;
 }

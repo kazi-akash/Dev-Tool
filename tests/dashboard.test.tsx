@@ -113,3 +113,54 @@ describe("alerts", () => {
     expect(a[2].text).not.toMatch(/is leaking/i);
   });
 });
+
+describe("memory mechanism card", () => {
+  const telemetry = (over = {}) => ({
+    physicalTotalBytes: 16 * GB,
+    physicalAvailableBytes: 1 * GB,
+    physicalUsedBytes: 15 * GB,
+    commitBytes: 23.5 * GB,
+    commitLimitBytes: 24 * GB,
+    commitPercent: 98,
+    pagefileUsagePercent: 81,
+    pagefileEstimatePercent: 90,
+    hardFaultsPerSec: 900,
+    diskActivePercent: 100,
+    trend: "RISING" as const,
+    mechanism: {
+      kind: "HEAVY_PAGING" as const,
+      confidence: 0.9,
+      paging: true,
+      commitExhausted: true,
+      diskSaturated: true,
+      summary: "RAM reached 96%, but the main cause of system slowdown appears to be heavy paging.",
+      evidence: [],
+    },
+    ...over,
+  });
+
+  it("explains the mechanism with measured counters", async () => {
+    mountWith({ telemetry: telemetry() });
+    expect(await screen.findByText("Heavy paging")).toBeInTheDocument();
+    expect(screen.getByText(/appears to be heavy paging/)).toBeInTheDocument();
+    expect(screen.getByText("900 pages/s")).toBeInTheDocument();
+    expect(screen.getByText(/Confidence 90%/)).toBeInTheDocument();
+  });
+
+  it("shows unavailable counters as unavailable, never as zero", async () => {
+    mountWith({
+      telemetry: telemetry({
+        hardFaultsPerSec: null,
+        diskActivePercent: null,
+        commitPercent: null,
+        commitBytes: null,
+        commitLimitBytes: null,
+        pagefileUsagePercent: null,
+        pagefileEstimatePercent: null,
+        mechanism: { ...telemetry().mechanism, kind: "NONE" },
+      }),
+    });
+    expect(await screen.findByText("Memory details")).toBeInTheDocument();
+    expect(screen.getAllByText("unavailable").length).toBeGreaterThanOrEqual(4);
+  });
+});

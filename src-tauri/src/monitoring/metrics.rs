@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use super::disks::DiskReport;
 use super::pressure::PressureReport;
+use super::telemetry::MemoryTelemetry;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +38,8 @@ pub struct SystemSnapshot {
     /// Free-space state and trend per drive (same order as `disks`).
     pub disk_health: Vec<DiskReport>,
     pub pressure: Option<PressureReport>,
+    /// Commit, paging, disk activity and the slowdown mechanism. `None` until the first sample.
+    pub telemetry: Option<MemoryTelemetry>,
     pub uptime_secs: u64,
     pub process_count: usize,
 }
@@ -150,6 +153,7 @@ mod tests {
             disks: vec![],
             disk_health: vec![],
             pressure: None,
+            telemetry: None,
             uptime_secs: 2,
             process_count: 3,
         };

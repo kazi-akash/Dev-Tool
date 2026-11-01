@@ -12,6 +12,7 @@ use super::disks::DiskEngine;
 use super::growth::GrowthTracker;
 use super::metrics::{DiskMetrics, SystemSnapshot, clamp_cpu, disk_metrics, memory_metrics};
 use super::pressure::{PressureEngine, PressureInputs};
+use super::telemetry::{TelemetryEngine, TelemetryInputs};
 use crate::processes::collector::ProcessCollector;
 use crate::processes::store::ProcessStore;
 use crate::windows::memory::read_commit_info;
@@ -34,6 +35,7 @@ pub struct MonitorState {
     pub pressure: Mutex<PressureEngine>,
     pub disks: Mutex<DiskEngine>,
     pub growth: Mutex<GrowthTracker>,
+    pub telemetry: Mutex<TelemetryEngine>,
     /// Filled once the history database is open; the sampler records into it when present.
     pub history: crate::commands::history::HistorySlot,
     latest: RwLock<Option<SystemSnapshot>>,
@@ -100,6 +102,8 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
     let mut disk_cache = disks.as_ref().map(collect_disks).unwrap_or_default();
     let mut tick: u64 = 0;
     let mut collector = ProcessCollector::default();
+    // PDH handles stay on this thread for life.
+    let mut perf = crate::windows::perf::PerfCounters::new();
     let started = Instant::now();
 
     // CPU usage needs two samples; prime it so the first real reading is meaningful.
@@ -149,6 +153,14 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
             now_secs,
         );
 
+        let telemetry = lock(&state.telemetry).update(TelemetryInputs {
+            total_bytes: memory.total_bytes,
+            available_bytes: memory.available_bytes,
+            commit,
+            perf: perf.sample(),
+            pressure: &pressure,
+        });
+
         lock(&state.growth).observe(now_secs, &process_list);
         let disk_health = lock(&state.disks).update(now_secs, &disk_cache);
 
@@ -159,6 +171,7 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
             disks: disk_cache.clone(),
             disk_health,
             pressure: Some(pressure),
+            telemetry: Some(telemetry),
             uptime_secs: System::uptime().unwrap_or(0),
             process_count: sys.processes().len(),
         };

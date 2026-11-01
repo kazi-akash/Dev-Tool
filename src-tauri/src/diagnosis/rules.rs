@@ -10,6 +10,7 @@ use crate::monitoring::disks::{DiskReport, DiskState};
 use crate::monitoring::growth::GrowthFinding;
 use crate::monitoring::metrics::{DiskMetrics, MemoryMetrics};
 use crate::monitoring::pressure::{PressureReport, PressureState, Trend};
+use crate::monitoring::telemetry::{MechanismKind, MemoryTelemetry};
 use crate::storage::safety::Safety;
 use crate::storage::scanner::ScanEntry;
 use crate::util::fmt_bytes;
@@ -26,6 +27,8 @@ pub struct Input<'a> {
     pub disk_health: &'a [DiskReport],
     pub docker: Option<&'a DockerStatus>,
     pub storage: Option<&'a [ScanEntry]>,
+    /// Paging, commit and disk evidence; `None` when the OS counters are unavailable.
+    pub telemetry: Option<&'a MemoryTelemetry>,
 }
 
 /// Rule thresholds, defaults from the product spec.
@@ -168,20 +171,28 @@ pub fn memory_pressure(i: &Input, c: &Config) -> Option<Diagnosis> {
     let concentrated = !named.is_empty() && share_of_used >= c.concentrated_share;
 
     let names: Vec<String> = named.iter().map(|w| cause_label(w)).collect();
-    let ram = format!("RAM is at {:.0}%", i.memory.percent);
+    // With telemetry the lead sentence explains the slowdown mechanism, not just the percentage.
+    let mechanism = i
+        .telemetry
+        .map(|t| &t.mechanism)
+        .filter(|m| m.kind != MechanismKind::None);
+    let ram = match mechanism {
+        Some(m) => m.summary.clone(),
+        None => format!("RAM is at {:.0}%.", i.memory.percent),
+    };
     let summary = if named.is_empty() {
         format!(
-            "{ram}. No single developer workload dominates; usage is spread across many processes."
+            "{ram} No single developer workload dominates; usage is spread across many processes."
         )
     } else if concentrated {
         format!(
-            "{ram}. {} account for approximately {}, making them the primary contributors.",
+            "{ram} {} account for approximately {}, making them the primary contributors.",
             join_names(&names),
             fmt_bytes(top_bytes)
         )
     } else {
         format!(
-            "{ram}. The largest contributors are {} (approximately {} together), but memory use is spread across many processes.",
+            "{ram} The largest contributors are {} (approximately {} together), but memory use is spread across many processes.",
             join_names(&names),
             fmt_bytes(top_bytes)
         )
@@ -234,7 +245,13 @@ pub fn memory_pressure(i: &Input, c: &Config) -> Option<Diagnosis> {
         primary_cause: named.first().map(|w| cause_label(w)),
         contributors,
         confidence,
-        evidence: i.pressure.reasons.clone(),
+        evidence: {
+            let mut e = i.pressure.reasons.clone();
+            if let Some(m) = mechanism {
+                e.extend(m.evidence.iter().cloned());
+            }
+            e
+        },
         recommendations,
     })
 }

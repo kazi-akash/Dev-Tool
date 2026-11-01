@@ -34,6 +34,7 @@ export function snapshot(over: Partial<SystemSnapshot> = {}): SystemSnapshot {
       minutesToCritical: 4,
       reasons: ["RAM usage is 88%"],
     },
+    telemetry: null,
     uptimeSecs: 3700,
     processCount: 321,
     ...over,

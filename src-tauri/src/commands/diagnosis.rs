@@ -49,6 +49,7 @@ pub fn gather(
         disk_health: &snapshot.disk_health,
         docker: Some(&docker_status),
         storage: scan.as_ref().map(|s| s.entries.as_slice()),
+        telemetry: snapshot.telemetry.as_ref(),
     };
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

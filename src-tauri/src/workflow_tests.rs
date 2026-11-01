@@ -112,6 +112,7 @@ fn low_disk_snapshot(free_gb: u64) -> SystemSnapshot {
         disk_health: vec![build_report(&DiskThresholds::default(), &d, &[], 0.0)],
         disks: vec![d],
         pressure: Some(pressure),
+        telemetry: None,
         uptime_secs: 10,
         process_count: 5,
     }
@@ -129,6 +130,7 @@ fn run_diagnosis(snap: &SystemSnapshot, entries: &[ScanEntry]) -> DiagnosisRepor
             disk_health: &snap.disk_health,
             docker: None,
             storage: Some(entries),
+            telemetry: None,
         },
         &Config::default(),
         1,

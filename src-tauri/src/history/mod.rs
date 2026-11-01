@@ -179,6 +179,7 @@ mod tests {
             disk_health: vec![build_report(&DiskThresholds::default(), &d, &[], 0.0)],
             disks: vec![d],
             pressure: None,
+            telemetry: None,
             uptime_secs: 1,
             process_count: 1,
         }

@@ -11,6 +11,7 @@ import type { DiagnosisReport, GrowthFinding, HistoryResponse, StoredDiagnosis, 
 import { buildAlerts } from "./alerts";
 import { HealthBanner } from "./HealthBanner";
 import { MetricCard } from "./MetricCard";
+import { MemoryMechanismCard } from "./MemoryMechanismCard";
 import { WorkloadList } from "./WorkloadList";
 
 const TREND_TEXT = { FALLING: "falling", STABLE: "stable", RISING: "rising", ESCALATING: "rising fast" } as const;
@@ -64,6 +65,8 @@ export function DashboardPage() {
           })}
         </div>
       )}
+
+      {snap?.telemetry && <MemoryMechanismCard telemetry={snap.telemetry} />}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <WorkloadList workloads={workloads.data} totalRamBytes={snap?.memory.totalBytes ?? 0} />
