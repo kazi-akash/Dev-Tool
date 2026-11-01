@@ -9,6 +9,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Row as _, SqlitePool};
 
 use crate::monitoring::incident::IncidentSummary;
+use crate::developers::sessions::SessionSummary;
 use crate::history::aggregate::{
     BUCKET_1H, BUCKET_1M, BUCKET_5M, DiskPoint, EVENTS_KEEP_MS, HOUR_KEEP_MS, MIN1_KEEP_MS,
     MIN5_KEEP_MS, RAW_KEEP_MS, Row, TopPoint, bucket_for_range, cutoff, merge,
@@ -217,6 +218,11 @@ impl Database {
             .execute(&self.pool)
             .await
             .map_err(err)?;
+        sqlx::query("DELETE FROM build_sessions WHERE start_ms < ?")
+            .bind(events_cut)
+            .execute(&self.pool)
+            .await
+            .map_err(err)?;
         sqlx::query("DELETE FROM incidents WHERE start_ms < ?")
             .bind(events_cut)
             .execute(&self.pool)
@@ -365,6 +371,46 @@ impl Database {
             .iter()
             .filter_map(|r| {
                 let mut s: IncidentSummary =
+                    serde_json::from_str(&r.get::<String, _>("summary_json")).ok()?;
+                s.id = r.get("id");
+                Some(s)
+            })
+            .collect())
+    }
+
+    // --- build sessions --------------------------------------------------------------------------
+
+    pub async fn insert_session(&self, s: &SessionSummary) -> Result<i64, String> {
+        let kind = serde_json::to_value(s.kind)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        let json = serde_json::to_string(s).map_err(err)?;
+        let res = sqlx::query(
+            "INSERT INTO build_sessions (start_ms, end_ms, kind, summary_json) VALUES (?, ?, ?, ?)",
+        )
+        .bind(s.start_ms as i64)
+        .bind(s.end_ms as i64)
+        .bind(kind)
+        .bind(json)
+        .execute(&self.pool)
+        .await
+        .map_err(err)?;
+        Ok(res.last_insert_rowid())
+    }
+
+    pub async fn recent_sessions(&self, limit: i64) -> Result<Vec<SessionSummary>, String> {
+        let rows = sqlx::query(
+            "SELECT id, summary_json FROM build_sessions ORDER BY start_ms DESC, id DESC LIMIT ?",
+        )
+        .bind(limit.clamp(1, 200))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(err)?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let mut s: SessionSummary =
                     serde_json::from_str(&r.get::<String, _>("summary_json")).ok()?;
                 s.id = r.get("id");
                 Some(s)

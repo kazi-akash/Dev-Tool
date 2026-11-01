@@ -121,6 +121,7 @@ pub fn run() {
             commands::history::get_recent_actions,
             commands::history::get_incidents,
             commands::history::get_incident_status,
+            commands::history::get_build_sessions,
             commands::window::take_pending_route,
         ])
         .setup(|app| {

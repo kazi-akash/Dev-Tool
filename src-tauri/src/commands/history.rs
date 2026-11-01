@@ -108,3 +108,43 @@ pub fn get_incident_status(
         since_ms: rec.active_since_ms(),
     }
 }
+
+/// Recorded build/startup sessions with their incident correlation (computed here, never stored).
+#[tauri::command]
+pub async fn get_build_sessions(
+    slot: State<'_, HistorySlot>,
+    monitor: State<'_, Arc<crate::monitoring::service::MonitorState>>,
+    limit: Option<i64>,
+) -> Result<HistoryResponse<crate::developers::sessions::SessionSummary>, String> {
+    use crate::developers::sessions::{IncidentWindow, correlate};
+    let Some(h) = slot.get() else {
+        return Ok(unavailable());
+    };
+    let mut sessions = h.db().recent_sessions(limit.unwrap_or(20)).await?;
+    let mut windows: Vec<IncidentWindow> = h
+        .db()
+        .recent_incidents(100)
+        .await?
+        .iter()
+        .map(|i| IncidentWindow {
+            id: i.id,
+            start_ms: i.start_ms,
+            end_ms: i.end_ms,
+        })
+        .collect();
+    // An incident still being recorded counts too; it has no id yet.
+    if let Some(since) = crate::monitoring::service::lock(&monitor.incident).active_since_ms() {
+        windows.push(IncidentWindow {
+            id: 0,
+            start_ms: since,
+            end_ms: now_ms() as u64,
+        });
+    }
+    for s in &mut sessions {
+        s.correlation = Some(correlate(s, &windows));
+    }
+    Ok(HistoryResponse {
+        available: true,
+        items: sessions,
+    })
+}

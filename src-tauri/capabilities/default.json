@@ -39,6 +39,7 @@
                         "allow-get-recent-actions",
                         "allow-get-incidents",
                         "allow-get-incident-status",
+                        "allow-get-build-sessions",
                         "allow-take-pending-route"
                     ]
 }

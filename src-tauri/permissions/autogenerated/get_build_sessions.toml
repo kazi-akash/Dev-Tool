@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-build-sessions"
+description = "Enables the get_build_sessions command without any pre-configured scope."
+commands.allow = ["get_build_sessions"]
+
+[[permission]]
+identifier = "deny-get-build-sessions"
+description = "Denies the get_build_sessions command without any pre-configured scope."
+commands.deny = ["get_build_sessions"]

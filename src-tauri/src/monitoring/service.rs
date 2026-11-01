@@ -38,6 +38,7 @@ pub struct MonitorState {
     pub growth: Mutex<GrowthTracker>,
     pub telemetry: Mutex<TelemetryEngine>,
     pub incident: Mutex<IncidentRecorder>,
+    pub sessions: Mutex<crate::developers::sessions::SessionTracker>,
     /// Filled once the history database is open; the sampler records into it when present.
     pub history: crate::commands::history::HistorySlot,
     latest: RwLock<Option<SystemSnapshot>>,
@@ -181,7 +182,8 @@ fn run(app: AppHandle, state: Arc<MonitorState>) {
         if let Some(history) = state.history.get() {
             history.sample(crate::history::sample_row(&snapshot, &workloads));
         }
-        record_incident(&app, &state, &snapshot, &workloads, &process_list, now_secs);
+        let sessions = record_sessions(&state, &snapshot, &workloads, &process_list, now_secs);
+        record_incident(&app, &state, &snapshot, &workloads, &process_list, sessions, now_secs);
         state.store(snapshot.clone());
 
         // Skip the IPC push while the window is hidden in the tray; the snapshot is still kept fresh.
@@ -255,9 +257,10 @@ fn record_incident(
     snapshot: &SystemSnapshot,
     workloads: &[crate::developers::workloads::Workload],
     processes: &[crate::processes::model::ProcessInfo],
+    sessions: Vec<String>,
     now_secs: f64,
 ) {
-    let sample = incident_sample(snapshot, workloads, processes, Vec::new());
+    let sample = incident_sample(snapshot, workloads, processes, sessions);
     let escalating = snapshot
         .pressure
         .as_ref()
@@ -277,4 +280,72 @@ fn record_incident(
             h.incident(summary);
         }
     }
+}
+
+/// Advance the build/session tracker; finished sessions go to history. Returns the active labels.
+fn record_sessions(
+    state: &MonitorState,
+    snapshot: &SystemSnapshot,
+    workloads: &[crate::developers::workloads::Workload],
+    processes: &[crate::processes::model::ProcessInfo],
+    now_secs: f64,
+) -> Vec<String> {
+    use crate::developers::sessions::{Tick, detect};
+    let detected = detect(processes);
+    let mut tracker = lock(&state.sessions);
+    // Nothing running and nothing detected: skip building the per-tick input.
+    if detected.is_empty() && tracker.active_labels().is_empty() {
+        tracker.observe(
+            now_secs,
+            &Tick {
+                ts_ms: snapshot.timestamp_ms,
+                ram_used_bytes: snapshot.memory.used_bytes,
+                ram_percent: snapshot.memory.percent,
+                cpu_percent: snapshot.cpu_percent,
+                disk_active_percent: None,
+                workloads: &[],
+                docker_bytes: None,
+                pids: &[],
+            },
+            &detected,
+        );
+        return Vec::new();
+    }
+    let named: Vec<NamedBytes> = workloads
+        .iter()
+        .map(|w| NamedBytes {
+            name: w.name.clone(),
+            bytes: w.memory_bytes,
+        })
+        .collect();
+    let pids: Vec<u32> = processes.iter().map(|p| p.pid).collect();
+    let docker = workloads
+        .iter()
+        .find(|w| matches!(w.kind, crate::developers::workloads::WorkloadKind::Docker))
+        .map(|w| w.memory_bytes);
+    let finished = tracker.observe(
+        now_secs,
+        &Tick {
+            ts_ms: snapshot.timestamp_ms,
+            ram_used_bytes: snapshot.memory.used_bytes,
+            ram_percent: snapshot.memory.percent,
+            cpu_percent: snapshot.cpu_percent,
+            disk_active_percent: snapshot
+                .telemetry
+                .as_ref()
+                .and_then(|t| t.disk_active_percent),
+            workloads: &named,
+            docker_bytes: docker,
+            pids: &pids,
+        },
+        &detected,
+    );
+    let labels = tracker.active_labels();
+    drop(tracker);
+    if let Some(h) = state.history.get() {
+        for s in finished {
+            h.session(s);
+        }
+    }
+    labels
 }
