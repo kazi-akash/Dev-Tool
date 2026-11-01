@@ -140,3 +140,21 @@ Each sample records RAM, available RAM, commit, pagefile, hard faults, CPU, disk
 The summary (SQLite `incidents`, 90 days) holds peaks, triggers, contributors (peak memory per workload, never summed across samples), a mechanism classified from the *peak* values, a hedged diagnosis, confidence, evidence and a 120-point timeline. Missing counters lower confidence and the text says the cause could not be determined.
 
 IPC: `get_incidents(limit)`, `get_incident_status`. Events: `incident-started`, `incident-finished` (summary). The History page lists incidents.
+
+## Build sessions (`developers/sessions.rs`)
+
+Detected from the process list each tick (cheap prefilter first): Gradle/Android build (wrapper or launcher client, or a Gradle daemon above 3% total CPU; an idle daemon is not a build; Android evidence makes it an Android build), Flutter build (`flutter_tools` + `build`), Next.js build, npm/pnpm build (suppressed under a Next.js build), Docker compose startup, Android emulator startup. Startup activities are time-boxed (compose 180 s, emulator 120 s) and cannot restart until their process has disappeared once.
+
+A session ends 10 s after the activity vanishes (builds spawn and die in bursts); sessions shorter than 5 s are dropped. It records RAM before (about 15 s earlier), RAM peak, CPU and disk peaks, new processes, per-workload memory growth, Docker/WSL2 change (host-process memory, not container-reported) and a result label from the peak.
+
+Correlation with incidents is computed when listing, never stored:
+
+| Level | Needs |
+|-------|-------|
+| STRONG | overlaps an incident (30 s slack), RAM grew >= 1 GiB, workload growth explains >= half of it. Text: "Strong correlation detected ... does not by itself prove ..." |
+| POSSIBLE | overlap in time only |
+| NONE | no overlap, no claim |
+
+Timing alone never produces STRONG, and the wording never says the build "caused" an incident. Active session names are stored in each incident sample. IPC: `get_build_sessions(limit)`.
+
+Limits: command lines are redacted and capped at 300 characters, so a `build` argument beyond that is not seen.

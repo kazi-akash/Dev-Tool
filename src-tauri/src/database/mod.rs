@@ -802,3 +802,47 @@ mod incident_tests {
         assert!(db.recent_incidents(10).await.unwrap().is_empty());
     }
 }
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+    use crate::developers::sessions::{ActivityKind, Correlation, CorrelationLevel, SessionSummary};
+
+    fn mk(start: u64) -> SessionSummary {
+        SessionSummary {
+            id: 0,
+            kind: ActivityKind::FlutterBuild,
+            label: "Flutter build".into(),
+            start_ms: start,
+            end_ms: start + 60_000,
+            duration_secs: 60,
+            ram_before_bytes: 1,
+            ram_peak_bytes: 2,
+            ram_peak_percent: 50.0,
+            cpu_peak_percent: 10.0,
+            disk_peak_percent: None,
+            processes_created: 3,
+            workload_growth: vec![],
+            docker_change_bytes: -5,
+            result: "NORMAL".into(),
+            correlation: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn sessions_round_trip_newest_first_without_stored_correlation() {
+        let db = Database::memory().await.unwrap();
+        let mut with_corr = mk(1_000);
+        with_corr.correlation = Some(Correlation {
+            level: CorrelationLevel::Strong,
+            incident_id: Some(1),
+            statement: "x".into(),
+        });
+        db.insert_session(&with_corr).await.unwrap();
+        db.insert_session(&mk(9_000)).await.unwrap();
+        let list = db.recent_sessions(10).await.unwrap();
+        assert_eq!(list[0].start_ms, 9_000);
+        assert_eq!(list[1].docker_change_bytes, -5);
+        assert!(list[1].correlation.is_none(), "correlation is computed at query time");
+    }
+}

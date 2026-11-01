@@ -63,6 +63,7 @@ export function defaultMocks(): Record<string, unknown> {
     get_recent_actions: { available: true, items: [] },
     get_incidents: { available: true, items: [] },
     get_incident_status: { active: false, sinceMs: null },
+    get_build_sessions: { available: true, items: [] },
     get_history: { available: true, items: rows },
     get_processes: {
       total: 2,

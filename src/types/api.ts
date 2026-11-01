@@ -314,3 +314,29 @@ export interface IncidentSummary {
   diagnosis: string;
   evidence: string[];
 }
+
+// --- build sessions ----------------------------------------------------------------------------
+export interface SessionCorrelation {
+  level: "STRONG" | "POSSIBLE" | "NONE";
+  incidentId: number | null;
+  statement: string;
+}
+
+export interface BuildSession {
+  id: number;
+  kind: string;
+  label: string;
+  startMs: number;
+  endMs: number;
+  durationSecs: number;
+  ramBeforeBytes: number;
+  ramPeakBytes: number;
+  ramPeakPercent: number;
+  cpuPeakPercent: number;
+  diskPeakPercent: number | null;
+  processesCreated: number;
+  workloadGrowth: IncidentContributor[];
+  dockerChangeBytes: number;
+  result: string;
+  correlation: SessionCorrelation | null;
+}
